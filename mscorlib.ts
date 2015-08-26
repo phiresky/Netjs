@@ -123,7 +123,13 @@ class NArray
 			return;
 		}
 		throw new NotImplementedException ();
-	}
+    }
+    static Copy<T>(input: T[], offset1: number, output: T[], offset2: number, count: number) {
+        for(var i = 0; i < count; i++) {
+            output[offset2 + i] = input[offset1 + i];
+        }
+    }
+
 }
 
 class NNumber
@@ -318,26 +324,32 @@ class NString
 	}
 	static Join(separator: string, parts: string[]): string
 	{
-		throw new NotImplementedException();
+        return parts.join(separator);
 	}
 	static Concat(parts: any[]): string
 	{
 		throw new NotImplementedException();
-	}
+    }
 
-	static FromChars(ch: number, count: number): string
-	static FromChars(chars: number[]): string
-	static FromChars(chOrChars: any, count: number = 1): string
-	{
-		if (chOrChars.constructor === Number) {
-			var r = String.fromCharCode (chOrChars);
-			for (var i = 2; i < count; i++) {
-				r += String.fromCharCode (chOrChars);
-			}
-			return r;
-		}
-		throw new NotImplementedException ();
-	}
+    static FromChars(char: number[]|number, c1?: number, c2?: number): string {
+        if (typeof char === 'number') {
+            var r = String.fromCharCode(char);
+            if (c1 === undefined) c1 = 1;
+            for (var i = 2; i < c1; i++) {
+                r += String.fromCharCode(char);
+            }
+            return r;
+        } else {
+            let str = "";
+            let start = 0, end = char.length;
+            if (c1 !== undefined) end = c1;
+            if (c2 !== undefined) {
+                start = c1; end = c2;
+            }
+            for (let i = start; i < start + end; i++) str += String.fromCharCode(char[i]);
+            return str;
+        }
+    }
 }
 
 enum StringComparison
@@ -396,7 +408,10 @@ class Type extends NObject
 	Equals(obj: any): boolean
 	{
 		return (obj instanceof Type) && ((<Type>obj).Name === this.Name);
-	}
+    }
+    static op_Inequality(obj: Type, obj2: Type): boolean {
+        return !(obj === obj2 || (obj != null && !obj.Equals(obj)));
+    }
 }
 
 class Nullable<T> extends NObject
@@ -592,6 +607,9 @@ class NumberFormatInfo extends NObject
 	NumberGroupSeparator: string = ",";
 }
 
+interface IEquatable<T> {
+    Equals(o: T): boolean
+}
 
 interface IFormatProvider
 {
@@ -1558,7 +1576,10 @@ class Debug extends NObject
 	static WriteLine (text: string): void
 	{
 		console.log(text);
-	}
+    }
+    static Assert(bool: boolean): void {
+        if (!bool) throw "Assertion Error";
+    }
 }
 
 class Thread extends NObject

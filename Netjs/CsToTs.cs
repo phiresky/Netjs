@@ -28,6 +28,7 @@ namespace Netjs
 		public void Run (AstNode compilationUnit)
 		{
 			foreach (var t in GetTransforms ()) {
+                Console.WriteLine("Trafo: " + t);
 				t.Run (compilationUnit);
 			}
 		}
@@ -385,7 +386,9 @@ namespace Netjs
 					return;
 
 				var needsMore = true;
-				while (needsMore) {
+                var loopCount = 0;
+                var loopLimit = 1000;
+				while (needsMore && loopCount++ < loopLimit) {
 					needsMore = false;
 					for (int i = 0; i < types.Count; i++) {
 						var t = types [i];
@@ -412,6 +415,11 @@ namespace Netjs
 							break;
 					}
 				}
+                Console.WriteLine(loopCount);
+                if (loopCount >= loopLimit)
+                {
+                    Console.WriteLine("Warning: endless. skipping reorder");
+                }
 
 				var role = types [0].Role;
 				var parent = types [0].Parent;
@@ -577,7 +585,7 @@ namespace Netjs
 		class AvoidTrickyJsKeywords : DepthFirstAstVisitor, IAstTransform
 		{
 			readonly HashSet<string> keywords = new HashSet<string> {
-				"arguments",
+				"arguments", "extends"
 			};
 			public void Run (AstNode compilationUnit)
 			{
@@ -2331,17 +2339,25 @@ namespace Netjs
 		{
 			public void Run (AstNode compilationUnit)
 			{
+                /*compilationUnit.Descendants.OfType<AstType>().Select(e => GetTypeRef(e)).
+                    ToList().ForEach(r => Console.WriteLine("ref:" + r.Name+"  "+r.FullName));
 				var ns = compilationUnit.Children.OfType<NamespaceDeclaration> ();
-
-				foreach (var d in ns.SelectMany (x => x.Members)) {
-					d.Remove ();
-					compilationUnit.AddChild (d, SyntaxTree.MemberRole);
-				}
+                foreach (var nss in ns) {
+				    foreach (var d in nss.Members) {
+					    d.Remove ();
+                        if(d is TypeDeclaration) {
+                            var e = d as TypeDeclaration;
+                            e.Name = nss.Name.Replace('.', '_') + '_' + e.Name;
+                           // compilationUnit.Descendants.OfType<TypeReference>().Where()
+                        }
+					    compilationUnit.AddChild (d, SyntaxTree.MemberRole);
+				    }
+                }
 
 				foreach (var n in ns) {
 					n.Remove ();
 				}
-
+                */
 			}
 		}
 
@@ -3359,15 +3375,22 @@ namespace Netjs
 							}
 						}
 
-						if (baseInit == null) {
-							throw new NotSupportedException ("This initializer for ctor `"+typeDeclaration.Name+"/"+c.Parameters.Count+"` not supported");
-						}
+                        if (baseInit == null)
+                        {
+                            Console.WriteLine("RR_ERR: This initializer for ctor `" + typeDeclaration.Name + "/" + c.Parameters.Count + "` not supported");
+                           // c.Initializer = 
+                           // throw new NotSupportedException("This initializer for ctor `" + typeDeclaration.Name + "/" + c.Parameters.Count + "` not supported");
+                        }
+                        else
+                        {
 
-						foreach (var a in baseInit.Arguments) {
-							a.AcceptVisitor (subs);
-						}
+                            foreach (var a in baseInit.Arguments)
+                            {
+                                a.AcceptVisitor(subs);
+                            }
 
-						c.Initializer = baseInit;
+                            c.Initializer = baseInit;
+                        }
 					}
 				}
 
