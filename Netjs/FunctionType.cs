@@ -21,10 +21,10 @@ using ICSharpCode.NRefactory.TypeSystem.Implementation;
 
 namespace ICSharpCode.NRefactory.CSharp
 {
-	public class FunctionType : SimpleType
-	{
-		public List<ParameterDeclaration> Parameters = new List<ParameterDeclaration> ();
-		public AstType ReturnType;
-	}
+    public class FunctionType : SimpleType
+    {
+        public List<ParameterDeclaration> Parameters = new List<ParameterDeclaration>();
+        public AstType ReturnType;
+    }
 }
 
