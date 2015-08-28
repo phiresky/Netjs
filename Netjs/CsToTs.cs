@@ -286,10 +286,17 @@ namespace Netjs
 				var m = invocationExpression.Annotation<MemberReference> ();
 				if (m.DeclaringType.FullName != "System.Object")
 					return;
-
+                var obj1 = mr.Target.Clone();
+                var obj2 = invocationExpression.Arguments.First().Clone();
+                if(invocationExpression.Arguments.Count > 1)
+                {
+                    // compare arguments, not target
+                    obj1 = invocationExpression.Arguments.First().Clone();
+                    obj2 = invocationExpression.Arguments.ElementAt(1).Clone();
+                }
 				var i = new InvocationExpression (
 					        new MemberReferenceExpression (new TypeReferenceExpression (new SimpleType ("NObject")), "GenericEquals"),
-					mr.Target.Clone (), invocationExpression.Arguments.First ().Clone ());
+					obj1, obj2);
 
 				invocationExpression.ReplaceWith (i);
 			}
