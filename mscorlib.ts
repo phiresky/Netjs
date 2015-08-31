@@ -322,9 +322,10 @@ class NString
 	{
 		return !str;
 	}
-	static Join(separator: string, parts: string[]): string
-	{
-        return parts.join(separator);
+	static Join(separator: string, parts: string[]|IEnumerable<string>): string
+    {
+        if (!(parts instanceof Array)) parts = Enumerable.ToArray(<IEnumerable<string>>parts);
+        return (<string[]>parts).join(separator);
 	}
 	static Concat(parts: any[]): string
 	{
@@ -1296,7 +1297,7 @@ class Enumerable extends NObject
 {
 	static ToArray<T>(e: IEnumerable<T>): T[]
 	{
-		throw new NotImplementedException ();
+        return new List<T>(e).array;
 	}
 
 	static ToList<T>(e: IEnumerable<T>): List<T>
@@ -1548,7 +1549,13 @@ class Enumerable extends NObject
 	static Min<T>(e: IEnumerable<T>, s?: (a: T)=>number): number
 	{
 		throw new NotImplementedException ();
-	}
+    }
+    static Reverse<T>(e: IEnumerable<T>): IEnumerable<T> {
+        let arr = Enumerable.ToArray(e);
+        let arrRev = [];
+        while (arr.length > 0) arrRev.push(arr.pop());
+        return new Array_Enumerable(arrRev);
+    }
 
 	static ToDictionary<T,K,V>(e: IEnumerable<T>, k: (T)=>K, v: (T)=>V): Dictionary<K,V>
 	{
