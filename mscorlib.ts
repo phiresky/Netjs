@@ -1639,3 +1639,6 @@ class WebClient extends NObject
 	}
 }
 
+class NReference<T> {
+    constructor(public val: T) { }
+}

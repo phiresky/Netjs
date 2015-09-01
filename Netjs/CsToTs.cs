@@ -3367,17 +3367,13 @@ namespace Netjs
 
                     var pty = pcompty.BaseType;
 
-                    var access = new IndexerExpression(new IdentifierExpression(p.Name), new PrimitiveExpression(0));
+                    var access = new MemberReferenceExpression(new IdentifierExpression(p.Name), "val");
                     var ptd = GetTypeDef(pty);
                     if (ptd != null)
                         access.AddAnnotation(ptd);
                     sub.Subs[p.Name] = access;
                     p.ParameterModifier = ParameterModifier.None;
-                    var c = new ComposedType
-                    {
-                        BaseType = p.Type.Clone(),
-                    };
-                    c.ArraySpecifiers.Add(new ArraySpecifier(1));
+                    var c = new SimpleType("NReference", p.Type.Clone());
                     p.Type = c;
                 }
 
@@ -3406,10 +3402,7 @@ namespace Netjs
                     {
                         var a = args[i];
                         var vname = "_p" + i;
-                        var va = new VariableDeclarationStatement(AstType.Null, vname, new ArrayCreateExpression
-                        {
-                            Initializer = new ArrayInitializerExpression(a.Expression.Clone())
-                        });
+                        var va = new VariableDeclarationStatement(AstType.Null, vname, new ObjectCreateExpression(new SimpleType("NReference"), a.Expression.Clone()));
                         a.ReplaceWith(new IdentifierExpression(vname));
                         lblock.Add(va);
                     }
