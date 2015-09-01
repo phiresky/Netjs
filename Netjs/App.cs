@@ -122,7 +122,9 @@ namespace Netjs
             using (var outputWriter = new StreamWriter(outPath))
             {
                 var output = new PlainTextOutput(outputWriter);
-                builder.GenerateCode(output, (s, e) => new TsOutputVisitor(s, e));
+                var outputFormatter = new TextTokenWriter(output, context);
+                var formattingPolicy = context.Settings.CSharpFormattingOptions;
+                builder.SyntaxTree.AcceptVisitor(new TsOutputVisitor(outputFormatter, formattingPolicy));
             }
 
             Step("Done");

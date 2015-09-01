@@ -20,6 +20,7 @@ using ICSharpCode.NRefactory.CSharp;
 using ICSharpCode.NRefactory.TypeSystem;
 using Mono.Cecil;
 using ICSharpCode.NRefactory;
+using ICSharpCode.NRefactory.TypeSystem.Implementation;
 
 namespace Netjs
 {
@@ -2005,7 +2006,6 @@ namespace Netjs
                         var tr = tre != null ? GetTypeRef(tre.Type) : null;
 
                         var name = tr != null ? tr.FullName : "";
-
                         if (name == "System.Math")
                         {
 
@@ -2089,7 +2089,11 @@ namespace Netjs
 
                 var t = GetTypeRef(memberReferenceExpression.Target);
                 if (t == null)
+                {
+                    MinimalCorlib.Instance.CreateCompilation();
+                    Console.WriteLine("Could not resolve " + memberReferenceExpression.Target);
                     return;
+                }
 
                 HashSet<string> repls = null;
                 string newTypeName = null;
@@ -2181,6 +2185,7 @@ namespace Netjs
             "Equals",
             "Remove",
             "Contains",
+            "ToCharArray"
         };
 
         class SuperPropertiesToThis : DepthFirstAstVisitor, IAstTransform
