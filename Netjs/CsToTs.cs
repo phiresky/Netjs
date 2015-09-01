@@ -1799,11 +1799,13 @@ namespace Netjs
 
                 foreach (var n in typeDeclaration.Members.OfType<MethodDeclaration>().Where(x => IsType(x.PrivateImplementationType, "IEnumerable") || IsType(x.PrivateImplementationType, "IEnumerator")))
                 {
-                    n.Remove();
+                   if(!IsType(n.PrivateImplementationType, "IEnumerator"))
+                        n.Remove();
                 }
 
                 foreach (var n in typeDeclaration.Members.OfType<PropertyDeclaration>().Where(x => IsType(x.PrivateImplementationType, "IEnumerable") || IsType(x.PrivateImplementationType, "IEnumerator")))
                 {
+                    // Console.WriteLine(n + "=" + n.PrivateImplementationType + " (" + n.GetText() + ")");
                     n.Remove();
                 }
 
@@ -3618,7 +3620,9 @@ namespace Netjs
                     for (int i = 0; i < ctors.Count; i++)
                     {
                         var c = ctors[i];
-                        c.Name = "constructor_" + i;
+                        //var appendix = String.Join("_", c.Parameters.Select(param => param.Type.GetText()));
+                        //appendix = appendix.Replace("[]", "Arr");
+                        c.Name = typeDeclaration.Name + "_" + i;
                     }
                 }
 

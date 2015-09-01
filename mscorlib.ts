@@ -589,7 +589,8 @@ class InvalidOperationException extends Exception
 
 class Environment
 {
-	static NewLine: string = "\n";
+    static NewLine: string = "\n";
+    static CurrentManagedThreadId = -1;
 }
 
 class Convert extends NObject

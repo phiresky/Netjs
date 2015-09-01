@@ -2270,7 +2270,7 @@ namespace Netjs
             foreach (var v in variableDeclarationStatement.Variables)
             {
                 WriteModifiers(variableDeclarationStatement.GetChildrenByRole(VariableDeclarationStatement.ModifierRole));
-                WriteKeyword("var");
+                WriteKeyword("var"); // "let"
                 v.NameToken.AcceptVisitor(this);
                 if (!variableDeclarationStatement.Type.IsNull)
                 {
