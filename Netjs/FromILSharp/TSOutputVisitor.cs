@@ -1,4 +1,5 @@
-﻿// Copyright (c) 2010-2013 AlphaSierraPapa for the SharpDevelop Team
+﻿// modified from https://github.com/icsharpcode/ILSpy/blob/2.3.1/NRefactory/ICSharpCode.NRefactory.CSharp/OutputVisitor/CSharpOutputVisitor.cs
+// Copyright (c) 2010-2013 AlphaSierraPapa for the SharpDevelop Team
 // 
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this
 // software and associated documentation files (the "Software"), to deal in the Software
@@ -26,20 +27,22 @@ using System.Threading.Tasks;
 using ICSharpCode.NRefactory.PatternMatching;
 using ICSharpCode.NRefactory.TypeSystem;
 using ICSharpCode.NRefactory.CSharp;
+using Netjs.FromILSharp;
 using ICSharpCode.NRefactory;
+using ICSharpCode.Decompiler.ILAst;
 
 namespace Netjs.FromILSharp
 {
     /// <summary>
     /// Outputs the AST.
     /// </summary>
-    public class CSharpOutputVisitor : IAstVisitor
+    public class TSOutputVisitor : IAstVisitor
     {
         readonly TokenWriter writer;
         readonly CSharpFormattingOptions policy;
         readonly Stack<AstNode> containerStack = new Stack<AstNode>();
 
-        public CSharpOutputVisitor(TextWriter textWriter, CSharpFormattingOptions formattingPolicy)
+        public TSOutputVisitor(TextWriter textWriter, CSharpFormattingOptions formattingPolicy)
         {
             if (textWriter == null)
             {
@@ -53,7 +56,7 @@ namespace Netjs.FromILSharp
             this.policy = formattingPolicy;
         }
 
-        public CSharpOutputVisitor(TokenWriter writer, CSharpFormattingOptions formattingPolicy)
+        public TSOutputVisitor(TokenWriter writer, CSharpFormattingOptions formattingPolicy)
         {
             if (writer == null)
             {
@@ -2432,7 +2435,7 @@ namespace Netjs.FromILSharp
         #endregion
 
         #region Pattern Nodes
-        public void VisitPatternPlaceholder(AstNode placeholder, ICSharpCode.NRefactory.PatternMatching.Pattern pattern)
+        public void VisitPatternPlaceholder(AstNode placeholder, Pattern pattern)
         {
             StartNode(placeholder);
             VisitNodeInPattern(pattern);
