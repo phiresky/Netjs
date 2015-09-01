@@ -63,10 +63,12 @@
     <Reference Include="System.Drawing" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="FromILSharp\InsertRequiredSpacesDecorator.cs" />
+    <Compile Include="FromILSharp\InsertSpecialsDecorator.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="App.cs" />
     <Compile Include="FunctionType.cs" />
-    <Compile Include="TsOutputVisitor.cs" />
+    <Compile Include="FromILSharp\TSOutputVisitor.cs" />
     <Compile Include="CsToTs.cs" />
   </ItemGroup>
   <ItemGroup>

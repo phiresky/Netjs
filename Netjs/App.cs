@@ -20,6 +20,7 @@ using System.Linq;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.Ast;
 using Mono.Cecil;
+using ICSharpCode.Decompiler.Ast.Transforms;
 
 namespace Netjs
 {
@@ -113,7 +114,11 @@ namespace Netjs
                 if (a != null)
                     builder.AddAssembly(a);
             }
-            builder.RunTransformations();
+
+            foreach (var transform in CreatePipeline(context))
+            {
+                transform.Run(builder.SyntaxTree);
+            }
 
             Step("Translating C# to TypeScript");
             new CsToTs().Run(builder.SyntaxTree);
@@ -121,13 +126,37 @@ namespace Netjs
             Step("Writing");
             using (var outputWriter = new StreamWriter(outPath))
             {
+               
+
+                builder.SyntaxTree.AcceptVisitor(new ICSharpCode.NRefactory.CSharp.InsertParenthesesVisitor { InsertParenthesesForReadability = true });
                 var output = new PlainTextOutput(outputWriter);
-                var outputFormatter = new TextTokenWriter(output, context);
+                var outputFormatter = new TextTokenWriter(output, context) { FoldBraces = context.Settings.FoldBraces };
                 var formattingPolicy = context.Settings.CSharpFormattingOptions;
-                builder.SyntaxTree.AcceptVisitor(new TsOutputVisitor(outputFormatter, formattingPolicy));
+                builder.SyntaxTree.AcceptVisitor(new FromILSharp.TSOutputVisitor(outputFormatter, formattingPolicy));
             }
 
             Step("Done");
+        }
+
+        public static IAstTransform[] CreatePipeline(DecompilerContext context)
+        {
+            // from ICSharpCode.Decompiler.Ast.Transforms.TransformationPipeline
+            return new IAstTransform[] {
+                new PushNegation(),
+                new DelegateConstruction(context),
+                new PatternStatementTransform(context),
+                new ReplaceMethodCallsWithOperators(context),
+                new IntroduceUnsafeModifier(),
+                new AddCheckedBlocks(),
+                new DeclareVariables(context), // should run after most transforms that modify statements
+				new ConvertConstructorCallIntoInitializer(), // must run after DeclareVariables
+				new DecimalConstantTransform(),
+                new IntroduceUsingDeclarations(context)
+                //new IntroduceExtensionMethods(context), // must run after IntroduceUsingDeclarations
+				//new IntroduceQueryExpressions(context), // must run after IntroduceExtensionMethods
+				//new CombineQueryExpressions(context),
+                //new FlattenSwitchBlocks(),
+            };
         }
 
         public static void Step(string message)

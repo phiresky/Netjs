@@ -37,6 +37,7 @@ namespace Netjs
 
         IEnumerable<IAstTransform> GetTransforms()
         {
+            // yield break;
             yield return new FixBadNames();
             yield return new LiftNestedClasses();
             yield return new RemoveConstraints();

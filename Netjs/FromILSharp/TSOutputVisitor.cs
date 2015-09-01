@@ -135,7 +135,7 @@ namespace Netjs.FromILSharp
             }
         }
 
-        void WriteCommaSeparatedList(IEnumerable<AstNode> list)
+        void WriteCommaSeparatedList(IEnumerable<AstNode> list, Action<AstNode> ext = null)
         {
             bool isFirst = true;
             foreach (AstNode node in list)
@@ -149,6 +149,8 @@ namespace Netjs.FromILSharp
                     Comma(node);
                 }
                 node.AcceptVisitor(this);
+                if (ext != null)
+                    ext(node);
             }
         }
 
@@ -363,20 +365,18 @@ namespace Netjs.FromILSharp
 
         #region IsKeyword Test
         static readonly HashSet<string> unconditionalKeywords = new HashSet<string> {
-            "abstract", "as", "base", "bool", "break", "byte", "case", "catch",
-            "char", "checked", "class", "const", "continue", "decimal", "default", "delegate",
-            "do", "double", "else", "enum", "event", "explicit", "extern", "false",
-            "finally", "fixed", "float", "for", "foreach", "goto", "if", "implicit",
-            "in", "int", "interface", "internal", "is", "lock", "long", "namespace",
-            "new", "null", "object", "operator", "out", "override", "params", "private",
-            "protected", "public", "readonly", "ref", "return", "sbyte", "sealed", "short",
-            "sizeof", "stackalloc", "static", "string", "struct", "switch", "this", "throw",
-            "true", "try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort",
-            "using", "virtual", "void", "volatile", "while"
+            "super", "boolean", "case", "catch",
+            "class", "const", "continue", "default",
+            "do", "double", "else", "enum", "false",
+            "finally", "for", "goto", "if",
+            "in",  "interface", "namespace", "instanceof", "module",
+            "new", "null", "object","private",
+            "public", "return", "static", "string", "switch", "this", "throw",
+            "true", "try", "typeof",
+            "using", "void", "while"
         };
-        static readonly HashSet<string> queryKeywords = new HashSet<string> {
-            "from", "where", "join", "on", "equals", "into", "let", "orderby",
-            "ascending", "descending", "select", "group", "by"
+        static readonly HashSet<string> queryKeywords = new HashSet<string>
+        {
         };
 
         /// <summary>
@@ -426,12 +426,12 @@ namespace Netjs.FromILSharp
             }
         }
 
-        public void WriteTypeParameters(IEnumerable<TypeParameterDeclaration> typeParameters)
+        public void WriteTypeParameters(IEnumerable<TypeParameterDeclaration> typeParameters, Action<TypeParameterDeclaration> ext = null)
         {
             if (typeParameters.Any())
             {
                 WriteToken(Roles.LChevron);
-                WriteCommaSeparatedList(typeParameters);
+                WriteCommaSeparatedList(typeParameters, n => { if (ext != null) ext((TypeParameterDeclaration)n); });
                 WriteToken(Roles.RChevron);
             }
         }
@@ -522,12 +522,9 @@ namespace Netjs.FromILSharp
                 WriteKeyword(AnonymousMethodExpression.AsyncModifierRole);
                 Space();
             }
-            WriteKeyword(AnonymousMethodExpression.DelegateKeywordRole);
-            if (anonymousMethodExpression.HasParameterList)
-            {
-                Space(policy.SpaceBeforeMethodDeclarationParentheses);
-                WriteCommaSeparatedListInParenthesis(anonymousMethodExpression.Parameters, policy.SpaceWithinMethodDeclarationParentheses);
-            }
+            Space(policy.SpaceBeforeMethodDeclarationParentheses);
+            WriteCommaSeparatedListInParenthesis(anonymousMethodExpression.Parameters, policy.SpaceWithinMethodDeclarationParentheses);
+            WriteToken("=>", Roles.Assign);
             anonymousMethodExpression.Body.AcceptVisitor(this);
             EndNode(anonymousMethodExpression);
         }
@@ -562,15 +559,16 @@ namespace Netjs.FromILSharp
         public void VisitArrayCreateExpression(ArrayCreateExpression arrayCreateExpression)
         {
             StartNode(arrayCreateExpression);
-            WriteKeyword(ArrayCreateExpression.NewKeywordRole);
-            arrayCreateExpression.Type.AcceptVisitor(this);
             if (arrayCreateExpression.Arguments.Count > 0)
             {
-                WriteCommaSeparatedListInBrackets(arrayCreateExpression.Arguments);
-            }
-            foreach (var specifier in arrayCreateExpression.AdditionalArraySpecifiers)
-            {
-                specifier.AcceptVisitor(this);
+                WriteKeyword(ArrayCreateExpression.NewKeywordRole);
+                WriteIdentifier("Array");
+                WriteToken(Roles.LChevron);
+                arrayCreateExpression.Type.AcceptVisitor(this);
+                WriteToken(Roles.RChevron);
+                LPar();
+                WriteCommaSeparatedList(arrayCreateExpression.Arguments);
+                RPar();
             }
             arrayCreateExpression.Initializer.AcceptVisitor(this);
             EndNode(arrayCreateExpression);
@@ -593,7 +591,7 @@ namespace Netjs.FromILSharp
             }
             else
             {
-                PrintInitializerElements(arrayInitializerExpression.Elements);
+                PrintInitializerElements(arrayInitializerExpression.Elements, true);
             }
             EndNode(arrayInitializerExpression);
         }
@@ -623,7 +621,7 @@ namespace Netjs.FromILSharp
             return false;
         }
 
-        void PrintInitializerElements(AstNodeCollection<Expression> elements)
+        void PrintInitializerElements(AstNodeCollection<Expression> elements, bool square = false)
         {
             BraceStyle style;
             if (policy.ArrayInitializerWrapping == Wrapping.WrapAlways)
@@ -634,7 +632,9 @@ namespace Netjs.FromILSharp
             {
                 style = BraceStyle.EndOfLine;
             }
-            OpenBrace(style);
+            if (!square)
+                OpenBrace(style);
+            else WriteToken(Roles.LBracket);
             bool isFirst = true;
             AstNode last = null;
             foreach (AstNode node in elements)
@@ -654,17 +654,30 @@ namespace Netjs.FromILSharp
             if (last != null)
                 OptionalComma(last.NextSibling);
             NewLine();
-            CloseBrace(style);
+            if (!square)
+            {
+                CloseBrace(style);
+            }
+            else WriteToken(Roles.RBracket);
         }
 
         public void VisitAsExpression(AsExpression asExpression)
         {
             StartNode(asExpression);
+            LPar();
+            LPar();
             asExpression.Expression.AcceptVisitor(this);
             Space();
-            WriteKeyword(AsExpression.AsKeywordRole);
+            WriteKeyword("instanceof", AsExpression.AsKeywordRole);
             Space();
             asExpression.Type.AcceptVisitor(this);
+            RPar();
+            WriteToken("?<", Roles.Expression);
+            asExpression.Type.AcceptVisitor(this);
+            WriteToken(">", Roles.Expression);
+            asExpression.Expression.AcceptVisitor(this);
+            WriteToken(":null", Roles.Expression);
+            RPar();
             EndNode(asExpression);
         }
 
@@ -682,7 +695,7 @@ namespace Netjs.FromILSharp
         public void VisitBaseReferenceExpression(BaseReferenceExpression baseReferenceExpression)
         {
             StartNode(baseReferenceExpression);
-            WriteKeyword("base", baseReferenceExpression.Role);
+            WriteKeyword("super", baseReferenceExpression.Role);
             EndNode(baseReferenceExpression);
         }
 
@@ -732,7 +745,22 @@ namespace Netjs.FromILSharp
                     throw new NotSupportedException("Invalid value for BinaryOperatorType");
             }
             Space(spacePolicy);
-            WriteToken(BinaryOperatorExpression.GetOperatorRole(binaryOperatorExpression.Operator));
+            if (binaryOperatorExpression.Operator == BinaryOperatorType.Equality)
+            {
+                WriteToken("===", BinaryOperatorExpression.GetOperatorRole(binaryOperatorExpression.Operator));
+            }
+            else if (binaryOperatorExpression.Operator == BinaryOperatorType.InEquality)
+            {
+                WriteToken("!==", BinaryOperatorExpression.GetOperatorRole(binaryOperatorExpression.Operator));
+            }
+            else if (binaryOperatorExpression.Operator == BinaryOperatorType.NullCoalescing)
+            {
+                WriteToken("||", BinaryOperatorExpression.GetOperatorRole(binaryOperatorExpression.Operator));
+            }
+            else
+            {
+                WriteToken(BinaryOperatorExpression.GetOperatorRole(binaryOperatorExpression.Operator));
+            }
             Space(spacePolicy);
             binaryOperatorExpression.Right.AcceptVisitor(this);
             EndNode(binaryOperatorExpression);
@@ -741,11 +769,11 @@ namespace Netjs.FromILSharp
         public void VisitCastExpression(CastExpression castExpression)
         {
             StartNode(castExpression);
-            LPar();
+            WriteToken("<", Roles.LPar);
             Space(policy.SpacesWithinCastParentheses);
             castExpression.Type.AcceptVisitor(this);
             Space(policy.SpacesWithinCastParentheses);
-            RPar();
+            WriteToken(">", Roles.RPar);
             Space(policy.SpaceAfterTypecast);
             castExpression.Expression.AcceptVisitor(this);
             EndNode(castExpression);
@@ -838,7 +866,11 @@ namespace Netjs.FromILSharp
         public void VisitInvocationExpression(InvocationExpression invocationExpression)
         {
             StartNode(invocationExpression);
+            if (invocationExpression.Target is AnonymousMethodExpression)
+                LPar();
             invocationExpression.Target.AcceptVisitor(this);
+            if (invocationExpression.Target is AnonymousMethodExpression)
+                RPar();
             Space(policy.SpaceBeforeMethodCallParentheses);
             WriteCommaSeparatedListInParenthesis(invocationExpression.Arguments, policy.SpaceWithinMethodCallParentheses);
             EndNode(invocationExpression);
@@ -849,7 +881,7 @@ namespace Netjs.FromILSharp
             StartNode(isExpression);
             isExpression.Expression.AcceptVisitor(this);
             Space();
-            WriteKeyword(IsExpression.IsKeywordRole);
+            WriteKeyword("instanceof", IsExpression.IsKeywordRole);
             isExpression.Type.AcceptVisitor(this);
             EndNode(isExpression);
         }
@@ -862,20 +894,24 @@ namespace Netjs.FromILSharp
                 WriteKeyword(LambdaExpression.AsyncModifierRole);
                 Space();
             }
-            if (LambdaNeedsParenthesis(lambdaExpression))
+            WriteCommaSeparatedListInParenthesis(lambdaExpression.Parameters, policy.SpaceWithinMethodDeclarationParentheses);
+            WriteToken("=>", Roles.Assign);
+            if (lambdaExpression.Body is BlockStatement)
             {
-                WriteCommaSeparatedListInParenthesis(lambdaExpression.Parameters, policy.SpaceWithinMethodDeclarationParentheses);
+                lambdaExpression.Body.AcceptVisitor(this);
             }
             else
             {
-                lambdaExpression.Parameters.Single().AcceptVisitor(this);
+                WriteToken(Roles.LBrace);
+                WriteKeyword("return");
+                Space();
+                lambdaExpression.Body.AcceptVisitor(this);
+                WriteToken(Roles.Semicolon);
+                WriteToken(Roles.RBrace);
             }
-            Space();
-            WriteToken(LambdaExpression.ArrowRole);
-            Space();
-            lambdaExpression.Body.AcceptVisitor(this);
             EndNode(lambdaExpression);
         }
+
 
         bool LambdaNeedsParenthesis(LambdaExpression lambdaExpression)
         {
@@ -903,7 +939,7 @@ namespace Netjs.FromILSharp
             WriteIdentifier(namedArgumentExpression.NameToken);
             WriteToken(Roles.Colon);
             Space();
-            namedArgumentExpression.Expression.AcceptVisitor(this);
+            namedArgumentExpression.NameToken.AcceptVisitor(this);
             EndNode(namedArgumentExpression);
         }
 
@@ -912,7 +948,7 @@ namespace Netjs.FromILSharp
             StartNode(namedExpression);
             WriteIdentifier(namedExpression.NameToken);
             Space();
-            WriteToken(Roles.Assign);
+            WriteToken(":", Roles.Assign);
             Space();
             namedExpression.Expression.AcceptVisitor(this);
             EndNode(namedExpression);
@@ -978,10 +1014,15 @@ namespace Netjs.FromILSharp
         public void VisitPrimitiveExpression(PrimitiveExpression primitiveExpression)
         {
             StartNode(primitiveExpression);
-            writer.WritePrimitiveValue(primitiveExpression.Value, primitiveExpression.UnsafeLiteralValue);
+            var val = primitiveExpression.Value;
+            if (val is decimal) writer.WritePrimitiveValue(Convert.ToDouble(val), primitiveExpression.UnsafeLiteralValue);
+            else if (val is uint) writer.WritePrimitiveValue(Convert.ToDouble(val), primitiveExpression.UnsafeLiteralValue);
+            else if (val is long || val is ulong) writer.WritePrimitiveValue(Convert.ToDouble(val), primitiveExpression.UnsafeLiteralValue);
+            else writer.WritePrimitiveValue(val, primitiveExpression.UnsafeLiteralValue);
             EndNode(primitiveExpression);
         }
         #endregion
+
 
         public void VisitSizeOfExpression(SizeOfExpression sizeOfExpression)
         {
@@ -1330,10 +1371,25 @@ namespace Netjs.FromILSharp
             WriteTypeParameters(typeDeclaration.TypeParameters);
             if (typeDeclaration.BaseTypes.Any())
             {
-                Space();
-                WriteToken(Roles.Colon);
-                Space();
-                WriteCommaSeparatedList(typeDeclaration.BaseTypes);
+                var bs = typeDeclaration.BaseTypes.FirstOrDefault(x => !CsToTs.IsInterface(x));
+
+                if (bs != null)
+                {
+                    Space();
+                    WriteToken("extends", Roles.Colon);
+                    Space();
+                    bs.AcceptVisitor(this);
+                }
+
+                var ints = typeDeclaration.BaseTypes.Where(CsToTs.IsInterface).ToList();
+
+                if (ints.Count > 0)
+                {
+                    Space();
+                    WriteToken(typeDeclaration.ClassType == ClassType.Interface ? "extends" : "implements", Roles.Colon);
+                    Space();
+                    WriteCommaSeparatedList(ints);
+                }
             }
             foreach (Constraint constraint in typeDeclaration.Constraints)
             {
@@ -1481,6 +1537,12 @@ namespace Netjs.FromILSharp
         {
             StartNode(breakStatement);
             WriteKeyword("break", BreakStatement.BreakKeywordRole);
+            var label = breakStatement.Annotation<LabelStatement>();
+            if (label != null)
+            {
+                Space();
+                WriteIdentifier(label.Label);
+            }
             Semicolon();
             EndNode(breakStatement);
         }
@@ -1497,6 +1559,12 @@ namespace Netjs.FromILSharp
         {
             StartNode(continueStatement);
             WriteKeyword("continue", ContinueStatement.ContinueKeywordRole);
+            var label = continueStatement.Annotation<LabelStatement>();
+            if (label != null)
+            {
+                Space();
+                WriteIdentifier(label.Label);
+            }
             Semicolon();
             EndNode(continueStatement);
         }
@@ -1816,20 +1884,15 @@ namespace Netjs.FromILSharp
         {
             StartNode(catchClause);
             WriteKeyword(CatchClause.CatchKeywordRole);
-            if (!catchClause.Type.IsNull)
+            Space(policy.SpaceBeforeCatchParentheses);
+            LPar();
+            Space(policy.SpacesWithinCatchParentheses);
+            if (!string.IsNullOrEmpty(catchClause.VariableName))
             {
-                Space(policy.SpaceBeforeCatchParentheses);
-                LPar();
-                Space(policy.SpacesWithinCatchParentheses);
-                catchClause.Type.AcceptVisitor(this);
-                if (!string.IsNullOrEmpty(catchClause.VariableName))
-                {
-                    Space();
-                    WriteIdentifier(catchClause.VariableNameToken);
-                }
-                Space(policy.SpacesWithinCatchParentheses);
-                RPar();
+                WriteIdentifier(catchClause.VariableNameToken);
             }
+            Space(policy.SpacesWithinCatchParentheses);
+            RPar();
             catchClause.Body.AcceptVisitor(this);
             EndNode(catchClause);
         }
@@ -1871,11 +1934,26 @@ namespace Netjs.FromILSharp
         public void VisitVariableDeclarationStatement(VariableDeclarationStatement variableDeclarationStatement)
         {
             StartNode(variableDeclarationStatement);
-            WriteModifiers(variableDeclarationStatement.GetChildrenByRole(VariableDeclarationStatement.ModifierRole));
-            variableDeclarationStatement.Type.AcceptVisitor(this);
-            Space();
-            WriteCommaSeparatedList(variableDeclarationStatement.Variables);
-            Semicolon();
+            foreach (var v in variableDeclarationStatement.Variables)
+            {
+                WriteModifiers(variableDeclarationStatement.GetChildrenByRole(VariableDeclarationStatement.ModifierRole));
+                WriteKeyword("var");
+                v.NameToken.AcceptVisitor(this);
+                if (!variableDeclarationStatement.Type.IsNull)
+                {
+                    WriteToken(Roles.Colon);
+                    Space();
+                    variableDeclarationStatement.Type.AcceptVisitor(this);
+                }
+                if (!v.Initializer.IsNull)
+                {
+                    Space(policy.SpaceAroundAssignment);
+                    WriteToken(Roles.Assign);
+                    Space(policy.SpaceAroundAssignment);
+                    v.Initializer.AcceptVisitor(this);
+                }
+                Semicolon();
+            }
             EndNode(variableDeclarationStatement);
         }
 
@@ -1946,11 +2024,7 @@ namespace Netjs.FromILSharp
             StartNode(constructorDeclaration);
             WriteAttributes(constructorDeclaration.Attributes);
             WriteModifiers(constructorDeclaration.ModifierTokens);
-            TypeDeclaration type = constructorDeclaration.Parent as TypeDeclaration;
-            if (type != null && type.Name != constructorDeclaration.Name)
-                WriteIdentifier((Identifier)type.NameToken.Clone());
-            else
-                WriteIdentifier(constructorDeclaration.NameToken);
+            WriteIdentifier(constructorDeclaration.Name);
             Space(policy.SpaceBeforeConstructorDeclarationParentheses);
             WriteCommaSeparatedListInParenthesis(constructorDeclaration.Parameters, policy.SpaceWithinMethodDeclarationParentheses);
             if (!constructorDeclaration.Initializer.IsNull)
@@ -1973,7 +2047,7 @@ namespace Netjs.FromILSharp
             }
             else
             {
-                WriteKeyword(ConstructorInitializer.BaseKeywordRole);
+                WriteKeyword("super", ConstructorInitializer.BaseKeywordRole);
             }
             Space(policy.SpaceBeforeMethodCallParentheses);
             WriteCommaSeparatedListInParenthesis(constructorInitializer.Arguments, policy.SpaceWithinMethodCallParentheses);
@@ -2054,12 +2128,22 @@ namespace Netjs.FromILSharp
         public void VisitFieldDeclaration(FieldDeclaration fieldDeclaration)
         {
             StartNode(fieldDeclaration);
-            WriteAttributes(fieldDeclaration.Attributes);
-            WriteModifiers(fieldDeclaration.ModifierTokens);
-            fieldDeclaration.ReturnType.AcceptVisitor(this);
-            Space();
-            WriteCommaSeparatedList(fieldDeclaration.Variables);
-            Semicolon();
+            foreach (var v in fieldDeclaration.Variables)
+            {
+                WriteModifiers(fieldDeclaration.GetChildrenByRole(VariableDeclarationStatement.ModifierRole));
+                v.NameToken.AcceptVisitor(this);
+                WriteToken(Roles.Colon);
+                Space();
+                fieldDeclaration.ReturnType.AcceptVisitor(this);
+                if (!v.Initializer.IsNull)
+                {
+                    Space(policy.SpaceAroundAssignment);
+                    WriteToken(Roles.Assign);
+                    Space(policy.SpaceAroundAssignment);
+                    v.Initializer.AcceptVisitor(this);
+                }
+                Semicolon();
+            }
             EndNode(fieldDeclaration);
         }
 
@@ -2122,16 +2206,29 @@ namespace Netjs.FromILSharp
             StartNode(methodDeclaration);
             WriteAttributes(methodDeclaration.Attributes);
             WriteModifiers(methodDeclaration.ModifierTokens);
-            methodDeclaration.ReturnType.AcceptVisitor(this);
-            Space();
             WritePrivateImplementationType(methodDeclaration.PrivateImplementationType);
             WriteIdentifier(methodDeclaration.NameToken);
-            WriteTypeParameters(methodDeclaration.TypeParameters);
+            WriteTypeParameters(methodDeclaration.TypeParameters,
+                                tp =>
+                                {
+                                    var cs = methodDeclaration.Constraints.Where(x => x.TypeParameter.Identifier == tp.Name && x.BaseTypes.Count > 0)
+                                            .Select(x => x.BaseTypes.FirstOrNullObject()).FirstOrDefault();
+                                    if (cs != null)
+                                    {
+                                        Space();
+                                        WriteToken("extends", Roles.Colon);
+                                        Space();
+                                        WriteIdentifier("NObject");
+                                    }
+
+                                });
             Space(policy.SpaceBeforeMethodDeclarationParentheses);
             WriteCommaSeparatedListInParenthesis(methodDeclaration.Parameters, policy.SpaceWithinMethodDeclarationParentheses);
-            foreach (Constraint constraint in methodDeclaration.Constraints)
+            if (!methodDeclaration.Name.StartsWith("set ", StringComparison.Ordinal))
             {
-                constraint.AcceptVisitor(this);
+                WriteToken(Roles.Colon);
+                Space();
+                methodDeclaration.ReturnType.AcceptVisitor(this);
             }
             WriteMethodBody(methodDeclaration.Body);
             EndNode(methodDeclaration);
@@ -2175,29 +2272,34 @@ namespace Netjs.FromILSharp
         {
             StartNode(parameterDeclaration);
             WriteAttributes(parameterDeclaration.Attributes);
-            switch (parameterDeclaration.ParameterModifier)
-            {
-                case ParameterModifier.Ref:
-                    WriteKeyword(ParameterDeclaration.RefModifierRole);
-                    break;
-                case ParameterModifier.Out:
-                    WriteKeyword(ParameterDeclaration.OutModifierRole);
-                    break;
-                case ParameterModifier.Params:
-                    WriteKeyword(ParameterDeclaration.ParamsModifierRole);
-                    break;
-                case ParameterModifier.This:
-                    WriteKeyword(ParameterDeclaration.ThisModifierRole);
-                    break;
-            }
-            parameterDeclaration.Type.AcceptVisitor(this);
-            if (!parameterDeclaration.Type.IsNull && !string.IsNullOrEmpty(parameterDeclaration.Name))
-            {
-                Space();
-            }
+            /* switch (parameterDeclaration.ParameterModifier)
+             {
+                 case ParameterModifier.Ref:
+                     WriteKeyword(ParameterDeclaration.RefModifierRole);
+                     break;
+                 case ParameterModifier.Out:
+                     WriteKeyword(ParameterDeclaration.OutModifierRole);
+                     break;
+                 case ParameterModifier.Params:
+                     WriteKeyword(ParameterDeclaration.ParamsModifierRole);
+                     break;
+                 case ParameterModifier.This:
+                     WriteKeyword(ParameterDeclaration.ThisModifierRole);
+                     break;
+             }*/
             if (!string.IsNullOrEmpty(parameterDeclaration.Name))
             {
                 WriteIdentifier(parameterDeclaration.NameToken);
+            }
+            if (parameterDeclaration.Annotation<OptionalParameterNote>() != null)
+            {
+                WriteToken("?", Roles.Attribute);
+            }
+            if (!parameterDeclaration.Type.IsNull)
+            {
+                WriteToken(Roles.Colon);
+                Space();
+                parameterDeclaration.Type.AcceptVisitor(this);
             }
             if (!parameterDeclaration.DefaultExpression.IsNull)
             {
@@ -2275,9 +2377,27 @@ namespace Netjs.FromILSharp
         public void VisitSimpleType(SimpleType simpleType)
         {
             StartNode(simpleType);
-            WriteIdentifier(simpleType.IdentifierToken);
-            WriteTypeArguments(simpleType.TypeArguments);
+
+            var ftype = simpleType as FunctionType;
+            if (ftype != null)
+            {
+                VisitFunctionType(ftype);
+            }
+            else
+            {
+                WriteIdentifier(simpleType.IdentifierToken);
+                WriteTypeArguments(simpleType.TypeArguments);
+            }
             EndNode(simpleType);
+        }
+
+        void VisitFunctionType(FunctionType functionType)
+        {
+            WriteCommaSeparatedListInParenthesis(functionType.Parameters, false);
+            Space();
+            WriteToken("=>", Roles.Assign);
+            Space();
+            functionType.ReturnType.AcceptVisitor(this);
         }
 
         public void VisitMemberType(MemberType memberType)
@@ -2301,10 +2421,6 @@ namespace Netjs.FromILSharp
         {
             StartNode(composedType);
             composedType.BaseType.AcceptVisitor(this);
-            if (composedType.HasNullableSpecifier)
-            {
-                WriteToken(ComposedType.NullableRole);
-            }
             for (int i = 0; i < composedType.PointerRank; i++)
             {
                 WriteToken(ComposedType.PointerRole);
@@ -2332,6 +2448,12 @@ namespace Netjs.FromILSharp
         {
             StartNode(primitiveType);
             writer.WritePrimitiveType(primitiveType.Keyword);
+            if (primitiveType.Keyword == "new")
+            {
+                // new() constraint
+                LPar();
+                RPar();
+            }
             EndNode(primitiveType);
         }
 
