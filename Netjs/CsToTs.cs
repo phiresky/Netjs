@@ -56,6 +56,7 @@ namespace Netjs
             yield return new PropertiesToMethods();
             yield return new InitializeFields();
             yield return new MakeSuperCtorFirst();
+            yield return new WrapRefArgs();
             yield return new MergeOverloads();
             yield return new FixCatches();
             yield return new FixEmptyThrow();
@@ -64,11 +65,10 @@ namespace Netjs
             yield return new InlineDelegates();
             yield return new OperatorDeclsToMethods();
             yield return new ExpandOperators();
-            yield return new ExpandIndexers();
+            //yield return new ExpandIndexers();
             yield return new InlineEnumMethods();
             yield return new NewArraysNeedDefaultValues();
             yield return new PassArraysAsEnumerables();
-            yield return new WrapRefArgs();
             yield return new ReplaceDefault();
             yield return new IndexersToMethods();
             yield return new ReplaceInstanceMembers();
@@ -450,7 +450,6 @@ namespace Netjs
                             break;
                     }
                 }
-                Console.WriteLine(loopCount);
                 if (loopCount >= loopLimit)
                 {
                     Console.WriteLine("Warning: endless. skipping reorder");
@@ -2268,7 +2267,6 @@ namespace Netjs
 
                     if (tr != null && (tr.IsArray || tr.FullName == "System.String"))
                         return;
-
                     var t = indexerExpression.Target;
 
                     var pa = indexerExpression.Parent as AssignmentExpression;
@@ -2596,13 +2594,14 @@ namespace Netjs
                     case KnownTypeCode.String:
                         return new PrimitiveType("string");
                     case KnownTypeCode.Char:
-                        return new PrimitiveType("number");
+                        return new PrimitiveType("char");
                     case KnownTypeCode.Void:
                         return new PrimitiveType("void");
                     case KnownTypeCode.Byte:
                     case KnownTypeCode.SByte:
                     case KnownTypeCode.Int16:
                     case KnownTypeCode.Int32:
+                        return new PrimitiveType("int");
                     case KnownTypeCode.Int64:
                     case KnownTypeCode.IntPtr:
                     case KnownTypeCode.UInt16:
@@ -2611,7 +2610,7 @@ namespace Netjs
                     case KnownTypeCode.Decimal:
                     case KnownTypeCode.Single:
                     case KnownTypeCode.Double:
-                        return new PrimitiveType("number");
+                        return new PrimitiveType("double");
                 }
 
                 switch (primitiveType.Keyword)
@@ -3562,7 +3561,7 @@ namespace Netjs
                             ReturnType = ms[0].ReturnType.Clone(),
                             Modifiers = ms[0].Modifiers,
                         };
-                        mo.Parameters.AddRange(ms[i].Parameters.Select(x => (ParameterDeclaration)x.Clone()));
+                        mo.Parameters.AddRange(ms[i].Parameters.Select(x => x.Clone()));
                         foreach (var p in mo.Parameters)
                         {
                             if (!p.DefaultExpression.IsNull)

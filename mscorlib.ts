@@ -351,6 +351,12 @@ class NString
             return str;
         }
     }
+    static ToCharArray(s:string): char[] {
+        let arr = new Array<char>(s.length);
+        for (let i = 0; i < arr.length; i++) arr[i] = s.charCodeAt(i);
+        return arr;
+    }
+
 }
 
 enum StringComparison
@@ -1642,3 +1648,7 @@ class WebClient extends NObject
 class NReference<T> {
     constructor(public val: T) { }
 }
+
+type char = number;
+type int = number;
+type double = number;
