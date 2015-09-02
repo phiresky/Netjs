@@ -436,11 +436,12 @@ namespace Netjs.FromILSharp
             }
         }
 
-        void WriteModifiers(IEnumerable<CSharpModifierToken> modifierTokens)
+        void WriteModifiers(IEnumerable<CSharpModifierToken> modifierTokens, bool isClass = false)
         {
             foreach (CSharpModifierToken modifier in modifierTokens)
             {
-                modifier.AcceptVisitor(this);
+                if (isClass && modifier.Modifier == Modifiers.Public) WriteToken("export ", Roles.Attribute);
+                else modifier.AcceptVisitor(this);
             }
         }
 
@@ -1346,7 +1347,7 @@ namespace Netjs.FromILSharp
         {
             StartNode(typeDeclaration);
             WriteAttributes(typeDeclaration.Attributes);
-            WriteModifiers(typeDeclaration.ModifierTokens);
+            WriteModifiers(typeDeclaration.ModifierTokens, true);
             BraceStyle braceStyle;
             switch (typeDeclaration.ClassType)
             {

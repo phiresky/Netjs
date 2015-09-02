@@ -3419,8 +3419,7 @@ namespace Netjs
                         var a = args[i];
                         var vname = "_p" + i;
                         var va = new AssignmentExpression(a.Expression.Clone(),
-                            new IndexerExpression(
-                                new IdentifierExpression(vname), new PrimitiveExpression(0)));
+                            new MemberReferenceExpression(new IdentifierExpression(vname), "val"));
                         lblock.Add(va);
                     }
                     lblock.Add(new ReturnStatement(new IdentifierExpression(rname)));
@@ -3573,6 +3572,7 @@ namespace Netjs
                     foreach (var m in ms)
                     {
                         m.Modifiers |= Modifiers.Private;
+                        m.Modifiers &= ~Modifiers.Public;
                         foreach (var p in m.Parameters)
                         {
                             if (!p.DefaultExpression.IsNull)
@@ -3989,7 +3989,7 @@ namespace Netjs
                     m |= Modifiers.Static;
                 }
 
-                m &= ~(Modifiers.Public | Modifiers.Abstract | Modifiers.Async | Modifiers.Const | Modifiers.Protected | Modifiers.Readonly | Modifiers.Override | Modifiers.Virtual | Modifiers.Sealed | Modifiers.Internal);
+                m &= ~(Modifiers.Abstract | Modifiers.Async | Modifiers.Const | Modifiers.Protected | Modifiers.Readonly | Modifiers.Override | Modifiers.Virtual | Modifiers.Sealed | Modifiers.Internal);
 
                 return m;
             }

@@ -309,14 +309,16 @@ class NString
 	{
 		return str.indexOf (sub) === str.length - sub.length;
 	}
-
+    
 	static Format(provider: IFormatProvider, format: string, args: any[]): string;
 	static Format(format: string, arg0: any): string;
 	static Format(format: string, arg0: any, arg1: any): string;
 	static Format(format: string, arg0: any, arg1: any, arg2: any): string;
 	static Format(providerOrFormat: any, formatOrArg0?: any, argsOrArg1?: any, arg2?: any): string
-	{
-		throw new NotImplementedException ();
+    {
+        console.log(arguments);
+        throw new NotImplementedException();
+        return "";
 	}
 	static IsNullOrEmpty(str: string): boolean
 	{
@@ -540,11 +542,12 @@ class TimeSpan extends NObject
 
 class NConsole extends NObject
 {
-	static WriteLine (line: string)
+	static WriteLine (line: any)
 	static WriteLine (format: string, arg0: any)
 	static WriteLine (lineOrFormat: string, arg0?: any)
-	{
-		throw new NotImplementedException ();
+    {
+        if (arguments.length === 1) console.log(lineOrFormat + "");
+		else throw new NotImplementedException ();
 	}
 	static Out: TextWriter;
 }
