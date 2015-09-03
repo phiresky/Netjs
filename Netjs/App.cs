@@ -21,6 +21,11 @@ using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.Ast;
 using Mono.Cecil;
 using ICSharpCode.Decompiler.Ast.Transforms;
+using ICSharpCode.NRefactory.CSharp;
+using ICSharpCode.NRefactory.TypeSystem;
+using System.Reflection;
+using Netjs.AstTransformers;
+using ICSharpCode.NRefactory.CSharp.Resolver;
 
 namespace Netjs
 {
@@ -83,56 +88,24 @@ namespace Netjs
             asmDir = Path.GetDirectoryName(asmPath);
             var outPath = Path.ChangeExtension(asmPath, ".ts");
 
-            Step("Reading IL");
-            var parameters = new ReaderParameters
-            {
-                AssemblyResolver = this,
-            };
-            var asm = AssemblyDefinition.ReadAssembly(asmPath, parameters);
-            mscorlib = AssemblyDefinition.ReadAssembly(typeof(String).Assembly.Location, parameters);
-            system = AssemblyDefinition.ReadAssembly(typeof(INotifyPropertyChanged).Assembly.Location, parameters);
-            systemCore = AssemblyDefinition.ReadAssembly(typeof(Enumerable).Assembly.Location, parameters);
-            systemDrawing = AssemblyDefinition.ReadAssembly(typeof(System.Drawing.Bitmap).Assembly.Location, parameters);
+            string sourceCode = decompileAssembly(asmPath);
+            File.WriteAllText("temp.cs", sourceCode);
+            var syntaxTree = new CSharpParser().Parse(sourceCode, "temp.cs");
+            var compilation = createCompilation(asmPath, syntaxTree);
 
-            Step("Decompiling IL to C#");
-            var context = new DecompilerContext(asm.MainModule);
-            context.Settings.ForEachStatement = false;
-            context.Settings.ObjectOrCollectionInitializers = false;
-            context.Settings.UsingStatement = false;
-            context.Settings.AsyncAwait = false;
-            context.Settings.AutomaticProperties = true;
-            context.Settings.AutomaticEvents = true;
-            context.Settings.QueryExpressions = false;
-            context.Settings.AlwaysGenerateExceptionVariableForCatchBlocks = true;
-            context.Settings.UsingDeclarations = false;
-            context.Settings.FullyQualifyAmbiguousTypeNames = true;
-            context.Settings.YieldReturn = false;
-            var builder = new AstBuilder(context);
-            builder.AddAssembly(asm);
-            foreach (var a in referencedAssemblies.Values)
-            {
-                if (a != null)
-                    builder.AddAssembly(a);
-            }
-
-            foreach (var transform in CreatePipeline(context))
-            {
-                transform.Run(builder.SyntaxTree);
-            }
-
+            /*{
+                var resolver = new CSharpAstResolver(compilation, syntaxTree);
+                var expr = syntaxTree.Descendants.OfType<Expression>().Where(e => (e.ToString()) == "(text + \"\\0\")").First();
+                Console.WriteLine(resolver.Resolve(expr).Type.FullName);
+            }*/
             Step("Translating C# to TypeScript");
-            new CsToTs().Run(builder.SyntaxTree);
+            CsToTs.Run(compilation, syntaxTree);
 
             Step("Writing");
             using (var outputWriter = new StreamWriter(outPath))
             {
-               
-
-                builder.SyntaxTree.AcceptVisitor(new ICSharpCode.NRefactory.CSharp.InsertParenthesesVisitor { InsertParenthesesForReadability = true });
-                var output = new PlainTextOutput(outputWriter);
-                var outputFormatter = new TextTokenWriter(output, context) { FoldBraces = context.Settings.FoldBraces };
-                var formattingPolicy = context.Settings.CSharpFormattingOptions;
-                builder.SyntaxTree.AcceptVisitor(new FromILSharp.TSOutputVisitor(outputFormatter, formattingPolicy));
+                syntaxTree.AcceptVisitor(new ICSharpCode.NRefactory.CSharp.InsertParenthesesVisitor { InsertParenthesesForReadability = true });
+                syntaxTree.AcceptVisitor(new FromILSharp.TSOutputVisitor(outputWriter, FormattingOptionsFactory.CreateAllman()));
             }
 
             Step("Done");
@@ -151,43 +124,82 @@ namespace Netjs
                 new DeclareVariables(context), // should run after most transforms that modify statements
 				new ConvertConstructorCallIntoInitializer(), // must run after DeclareVariables
 				new DecimalConstantTransform(),
-                new IntroduceUsingDeclarations(context)
+                new IntroduceUsingDeclarations(context),
                 //new IntroduceExtensionMethods(context), // must run after IntroduceUsingDeclarations
 				//new IntroduceQueryExpressions(context), // must run after IntroduceExtensionMethods
 				//new CombineQueryExpressions(context),
                 //new FlattenSwitchBlocks(),
+                new FixBadNames()
             };
         }
 
-        public static void Step(string message)
+        ICompilation createCompilation(string mainPath, SyntaxTree tree)
         {
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine(message);
-            Console.ResetColor();
+            List<IUnresolvedAssembly> assemblies = new List<IUnresolvedAssembly>();
+            var unresolved = tree.ToTypeSystem();
+            IProjectContent project = new CSharpProjectContent();
+            string[] paths = {/* mainPath, */typeof(String).Assembly.Location, typeof(INotifyPropertyChanged).Assembly.Location,
+                typeof(Enumerable).Assembly.Location, typeof(System.Drawing.Bitmap).Assembly.Location };
+            AssemblyLoader loader = AssemblyLoader.Create();
+            return project.AddOrUpdateFiles(unresolved)
+                .AddAssemblyReferences(paths.Select(path => loader.LoadAssemblyFile(path)))
+                .CreateCompilation();
         }
 
-        public static void Warning(string format, params object[] args)
+        string decompileAssembly(string path)
         {
-            Warning(string.Format(format, args));
-        }
+            Step("Reading IL");
+            var parameters = new ReaderParameters
+            {
+                AssemblyResolver = this,
+            };
+            var asm = AssemblyDefinition.ReadAssembly(path, parameters);
+            mscorlib = AssemblyDefinition.ReadAssembly(typeof(String).Assembly.Location, parameters);
+            system = AssemblyDefinition.ReadAssembly(typeof(INotifyPropertyChanged).Assembly.Location, parameters);
+            systemCore = AssemblyDefinition.ReadAssembly(typeof(Enumerable).Assembly.Location, parameters);
+            systemDrawing = AssemblyDefinition.ReadAssembly(typeof(System.Drawing.Bitmap).Assembly.Location, parameters);
+            Step("Decompiling IL to C#");
+            var context = new DecompilerContext(asm.MainModule);
+            context.Settings.ForEachStatement = false;
+            context.Settings.ObjectOrCollectionInitializers = false;
+            context.Settings.UsingStatement = false;
+            context.Settings.AsyncAwait = false;
+            context.Settings.AutomaticProperties = true;
+            context.Settings.AutomaticEvents = true;
+            context.Settings.QueryExpressions = false;
+            context.Settings.AlwaysGenerateExceptionVariableForCatchBlocks = true;
+            context.Settings.UsingDeclarations = true;
+            context.Settings.FullyQualifyAmbiguousTypeNames = true;
+            context.Settings.YieldReturn = false;
+            var builder = new AstBuilder(context);
+            builder.AddAssembly(asm);
 
-        public static void Warning(string message)
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine(message);
-            Console.ResetColor();
-        }
+            foreach (var a in referencedAssemblies.Values)
+            {
+                if (a != null)
+                    builder.AddAssembly(a);
+            }
+            {
+                var type = asm.MainModule.Types.ElementAt(16);
+                Console.WriteLine(type + "::");
+                var astBuilder = new AstBuilder(new DecompilerContext(asm.MainModule) { CurrentType = type, Settings=context.Settings.Clone()});
+                astBuilder.AddType(type);
+                astBuilder.RunTransformations();
+                var op = new PlainTextOutput();
+                astBuilder.GenerateCode(op);
+                Console.WriteLine(op.ToString());
+            }
+            foreach (var transform in CreatePipeline(context))
+            {
+                transform.Run(builder.SyntaxTree);
+            }
 
-        public static void Error(string format, params object[] args)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine(format, args);
-            Console.ResetColor();
-        }
+            builder.SyntaxTree.AcceptVisitor(new ICSharpCode.NRefactory.CSharp.InsertParenthesesVisitor { InsertParenthesesForReadability = true });
 
-        public static void Info(string format, params object[] args)
-        {
-            Console.WriteLine(format, args);
+            var str = new StringWriter();
+            var outputFormatter = new TextTokenWriter(new PlainTextOutput(str), context) { FoldBraces = context.Settings.FoldBraces };
+            builder.SyntaxTree.AcceptVisitor(new CSharpOutputVisitor(outputFormatter, context.Settings.CSharpFormattingOptions));
+            return str.GetStringBuilder().ToString();
         }
 
         #region IAssemblyResolver implementation
@@ -246,6 +258,39 @@ namespace Netjs
         public AssemblyDefinition Resolve(string fullName, ReaderParameters parameters)
         {
             return null;
+        }
+        #endregion
+
+        #region console util
+        public static void Step(string message)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine(message);
+            Console.ResetColor();
+        }
+
+        public static void Warning(string format, params object[] args)
+        {
+            Warning(string.Format(format, args));
+        }
+
+        public static void Warning(string message)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine(message);
+            Console.ResetColor();
+        }
+
+        public static void Error(string format, params object[] args)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine(format, args);
+            Console.ResetColor();
+        }
+
+        public static void Info(string format, params object[] args)
+        {
+            Console.WriteLine(format, args);
         }
         #endregion
     }

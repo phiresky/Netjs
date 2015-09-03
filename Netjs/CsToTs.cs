@@ -21,13 +21,25 @@ using ICSharpCode.NRefactory.TypeSystem;
 using Mono.Cecil;
 using ICSharpCode.NRefactory;
 using ICSharpCode.NRefactory.TypeSystem.Implementation;
+using ICSharpCode.NRefactory.CSharp.Resolver;
+using ICSharpCode.NRefactory.Semantics;
+using Netjs.AstTransformers;
 
 namespace Netjs
 {
-    public class CsToTs : IAstTransform
+    public class CsToTs
     {
-        public void Run(AstNode compilationUnit)
+        public static ICompilation compilation;
+        public static SyntaxTree rootNode;
+        public static Dictionary<AstNode, ITypeReference> references;
+
+        public static void Run(ICompilation compilation, SyntaxTree compilationUnit)
         {
+            CsToTs.compilation = compilation;
+            CsToTs.rootNode = compilationUnit;
+            CsToTs.resolver = new CSharpAstResolver(compilation, rootNode);
+            App.Step("Resolving Types");
+            references = compilationUnit.Descendants.ToDictionary(node => node, node => resolver.Resolve(node).Type.ToTypeReference());
             foreach (var t in GetTransforms())
             {
                 Console.WriteLine("Trafo: " + t);
@@ -35,10 +47,10 @@ namespace Netjs
             }
         }
 
-        IEnumerable<IAstTransform> GetTransforms()
+       static IEnumerable<IAstTransform> GetTransforms()
         {
             // yield break;
-            yield return new FixBadNames();
+            // yield return new FixBadNames();
             yield return new LiftNestedClasses();
             yield return new RemoveConstraints();
             yield return new FlattenNamespaces();
@@ -93,6 +105,50 @@ namespace Netjs
             yield return new AddReferences();
             yield return new NullableChecks();
         }
+
+
+        static HashSet<string> objectRepls = new HashSet<string>
+        {
+            "GetHashCode",
+            "ToString",
+        };
+
+        static HashSet<string> numberRepls = new HashSet<string>
+        {
+            "GetHashCode",
+            "ToString",
+        };
+
+        static HashSet<string> boolRepls = new HashSet<string>
+        {
+            "GetHashCode",
+            "ToString",
+        };
+
+        static HashSet<string> stringRepls = new HashSet<string>
+        {
+            "ToLowerInvariant",
+            "ToUpperInvariant",
+            "GetHashCode",
+            "Replace",
+            "IndexOf",
+            "IndexOfAny",
+            "StartsWith",
+            "EndsWith",
+            "Substring",
+            "Trim",
+            "TrimStart",
+            "TrimEnd",
+            "Equals",
+            "Remove",
+            "Contains",
+            "ToCharArray"
+        };
+        private static CSharpAstResolver resolver;
+
+
+
+        #region transforms
 
         class CallStaticCtors : DepthFirstAstVisitor, IAstTransform
         {
@@ -303,6 +359,7 @@ namespace Netjs
                     return;
 
                 var m = invocationExpression.Annotation<MemberReference>();
+                if (m == null) return;
                 if (m.DeclaringType.FullName != "System.Object")
                     return;
                 var obj1 = mr.Target.Clone();
@@ -2090,8 +2147,13 @@ namespace Netjs
                 var t = GetTypeRef(memberReferenceExpression.Target);
                 if (t == null)
                 {
-                    MinimalCorlib.Instance.CreateCompilation();
-                    Console.WriteLine("Could not resolve " + memberReferenceExpression.Target);
+                    // MinimalCorlib.Instance.CreateCompilation();
+                    var targ = memberReferenceExpression.Target;
+                    
+                    Console.WriteLine("Could not resolve " + targ);
+                    var result = resolver.Resolve(targ);
+                    if (result is ErrorResolveResult) Console.WriteLine("Err: " + result + ": " + (result as ErrorResolveResult).Message+ ": "+ resolver.GetExpectedType(targ));
+                    else Console.WriteLine("Is: " + result+": "+ resolver.GetExpectedType(targ));
                     return;
                 }
 
@@ -2149,44 +2211,6 @@ namespace Netjs
                 }
             }
         }
-
-        static HashSet<string> objectRepls = new HashSet<string>
-        {
-            "GetHashCode",
-            "ToString",
-        };
-
-        static HashSet<string> numberRepls = new HashSet<string>
-        {
-            "GetHashCode",
-            "ToString",
-        };
-
-        static HashSet<string> boolRepls = new HashSet<string>
-        {
-            "GetHashCode",
-            "ToString",
-        };
-
-        static HashSet<string> stringRepls = new HashSet<string>
-        {
-            "ToLowerInvariant",
-            "ToUpperInvariant",
-            "GetHashCode",
-            "Replace",
-            "IndexOf",
-            "IndexOfAny",
-            "StartsWith",
-            "EndsWith",
-            "Substring",
-            "Trim",
-            "TrimStart",
-            "TrimEnd",
-            "Equals",
-            "Remove",
-            "Contains",
-            "ToCharArray"
-        };
 
         class SuperPropertiesToThis : DepthFirstAstVisitor, IAstTransform
         {
@@ -2528,25 +2552,6 @@ namespace Netjs
             {
                 base.VisitTypeDeclaration(typeDeclaration);
                 typeDeclaration.Constraints.Clear();
-            }
-        }
-
-        class FixBadNames : DepthFirstAstVisitor, IAstTransform
-        {
-            public void Run(AstNode compilationUnit)
-            {
-                compilationUnit.AcceptVisitor(this);
-            }
-
-            public override void VisitIdentifier(Identifier identifier)
-            {
-                base.VisitIdentifier(identifier);
-                var o = identifier.Name;
-                var n = o.Replace('<', '_').Replace('>', '_');
-                if (n != o)
-                {
-                    identifier.Name = n;
-                }
             }
         }
 
@@ -4296,10 +4301,8 @@ namespace Netjs
         {
             return ps.Select(x => GetJsConstructor(x.Type)).Distinct().Count();
         }
-
-
     }
-
+    #endregion
     class OptionalParameterNote { }
 }
 
