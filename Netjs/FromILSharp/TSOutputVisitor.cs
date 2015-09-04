@@ -1454,6 +1454,7 @@ namespace Netjs.FromILSharp
         public void VisitUsingDeclaration(UsingDeclaration usingDeclaration)
         {
             StartNode(usingDeclaration);
+            WriteToken("// ", Roles.Comment);
             WriteKeyword(UsingDeclaration.UsingKeywordRole);
             usingDeclaration.Import.AcceptVisitor(this);
             Semicolon();

@@ -85,11 +85,20 @@ namespace Netjs
             }
 
             var asmPath = Path.GetFullPath(config.MainAssembly);
+            Step("Loading " + asmPath);
+            string sourceCode;
+            if (asmPath.EndsWith(".cs"))
+            {
+                sourceCode = File.ReadAllText(asmPath);
+            }
+            else
+            {
+                sourceCode = decompileAssembly(asmPath);
+                File.WriteAllText("temp.cs", sourceCode);
+            }
             asmDir = Path.GetDirectoryName(asmPath);
             var outPath = Path.ChangeExtension(asmPath, ".ts");
 
-            string sourceCode = decompileAssembly(asmPath);
-            File.WriteAllText("temp.cs", sourceCode);
             var syntaxTree = new CSharpParser().Parse(sourceCode, "temp.cs");
             var compilation = createCompilation(asmPath, syntaxTree);
 
@@ -101,7 +110,7 @@ namespace Netjs
             Step("Translating C# to TypeScript");
             CsToTs.Run(compilation, syntaxTree);
 
-            Step("Writing");
+            Step("Writing to " + outPath);
             using (var outputWriter = new StreamWriter(outPath))
             {
                 syntaxTree.AcceptVisitor(new ICSharpCode.NRefactory.CSharp.InsertParenthesesVisitor { InsertParenthesesForReadability = true });
@@ -129,8 +138,21 @@ namespace Netjs
 				//new IntroduceQueryExpressions(context), // must run after IntroduceExtensionMethods
 				//new CombineQueryExpressions(context),
                 //new FlattenSwitchBlocks(),
-                new FixBadNames()
+                new FixBadNames(),
+                new RemoveAnnot()
+
             };
+        }
+        private class RemoveAnnot : DepthFirstAstVisitor, IAstTransform
+        {
+            public void Run(AstNode compilationUnit)
+            {
+                compilationUnit.AcceptVisitor(this);
+            }
+            public override void VisitTypeDeclaration(TypeDeclaration typeDeclaration)
+            {
+                typeDeclaration.Attributes.ToList().ForEach(e => Console.WriteLine("attrib:" + e.GetType() + "=" + e));
+            }
         }
 
         ICompilation createCompilation(string mainPath, SyntaxTree tree)
@@ -179,7 +201,7 @@ namespace Netjs
                 if (a != null)
                     builder.AddAssembly(a);
             }
-            {
+            /*{
                 var type = asm.MainModule.Types.ElementAt(16);
                 Console.WriteLine(type + "::");
                 var astBuilder = new AstBuilder(new DecompilerContext(asm.MainModule) { CurrentType = type, Settings=context.Settings.Clone()});
@@ -188,13 +210,13 @@ namespace Netjs
                 var op = new PlainTextOutput();
                 astBuilder.GenerateCode(op);
                 Console.WriteLine(op.ToString());
-            }
+            }*/
             foreach (var transform in CreatePipeline(context))
             {
                 transform.Run(builder.SyntaxTree);
             }
 
-            builder.SyntaxTree.AcceptVisitor(new ICSharpCode.NRefactory.CSharp.InsertParenthesesVisitor { InsertParenthesesForReadability = true });
+            builder.SyntaxTree.AcceptVisitor(new InsertParenthesesVisitor { InsertParenthesesForReadability = true });
 
             var str = new StringWriter();
             var outputFormatter = new TextTokenWriter(new PlainTextOutput(str), context) { FoldBraces = context.Settings.FoldBraces };

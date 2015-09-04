@@ -18,7 +18,6 @@ using System.Linq;
 using ICSharpCode.Decompiler.Ast.Transforms;
 using ICSharpCode.NRefactory.CSharp;
 using ICSharpCode.NRefactory.TypeSystem;
-using Mono.Cecil;
 using ICSharpCode.NRefactory;
 using ICSharpCode.NRefactory.TypeSystem.Implementation;
 using ICSharpCode.NRefactory.CSharp.Resolver;
@@ -31,7 +30,7 @@ namespace Netjs
     {
         public static ICompilation compilation;
         public static SyntaxTree rootNode;
-        public static Dictionary<AstNode, ITypeReference> references;
+        public static Dictionary<AstNode, ResolveResult> typeCache;
 
         public static void Run(ICompilation compilation, SyntaxTree compilationUnit)
         {
@@ -39,15 +38,74 @@ namespace Netjs
             CsToTs.rootNode = compilationUnit;
             CsToTs.resolver = new CSharpAstResolver(compilation, rootNode);
             App.Step("Resolving Types");
-            references = compilationUnit.Descendants.ToDictionary(node => node, node => resolver.Resolve(node).Type.ToTypeReference());
+            typeCache = compilationUnit.Descendants.ToDictionary(node => node, node => resolver.Resolve(node));
             foreach (var t in GetTransforms())
             {
-                Console.WriteLine("Trafo: " + t);
+                App.Info("Trafo: " + t);
                 t.Run(compilationUnit);
             }
         }
 
-       static IEnumerable<IAstTransform> GetTransforms()
+        public static ResolveResult resolve(AstNode node)
+        {
+            ResolveResult res;
+            if (!typeCache.TryGetValue(node, out res))
+            {
+               // App.Warning("could not resolve " + node);
+                return null;
+            }
+            //if (res == null) App.Warning("could not resolve " + node);
+            return res;
+        }
+
+        public static IType resolveType(Expression node)
+        {
+            return resolve(node)?.Type;
+            /*var res = resolve(node);
+            if (res is TypeResolveResult) return res.Type;
+            if (res is MemberResolveResult)
+            {
+                var mem = (res as MemberResolveResult).Member as IField;
+                if (mem != null) return mem.Type;
+            }
+            if (res is LocalResolveResult) return (res as LocalResolveResult).Variable.Type;
+            if (res is ThisResolveResult) return (res as ThisResolveResult).Type;
+            if (res != null && !(res is ErrorResolveResult))
+                App.Warning("Tried to resolve " + node + " as type but is " + res);
+            return null;*/
+        }
+
+        public static IType resolveType(AstType node)
+        {
+            return (resolve(node) as TypeResolveResult)?.Type;
+        }
+
+        public static IMethod resolveMethod(InvocationExpression node)
+        {
+            return (resolve(node) as InvocationResolveResult)?.Member as IMethod;
+        }
+        public static IMethod resolveMethod(ConstructorInitializer node)
+        {
+            return (resolve(node) as InvocationResolveResult)?.Member as IMethod;
+        }
+        public static IMethod resolveMethod(ConstructorDeclaration node)
+        {
+            return (resolve(node) as MemberResolveResult)?.Member as IMethod;
+        }
+
+        public static IMember resolveMember(Expression node)
+        {
+            return (resolve(node) as MemberResolveResult)?.Member;
+        }
+
+        private static bool IsPrimitive(IType leftT)
+        {
+            Console.WriteLine("is " + leftT + " primitive ? i dunno");
+            return false;
+            //throw new NotImplementedException();
+        }
+
+        static IEnumerable<IAstTransform> GetTransforms()
         {
             // yield break;
             // yield return new FixBadNames();
@@ -358,7 +416,7 @@ namespace Netjs
                 if (mr.MemberName != "Equals")
                     return;
 
-                var m = invocationExpression.Annotation<MemberReference>();
+                var m = resolveMethod(invocationExpression);
                 if (m == null) return;
                 if (m.DeclaringType.FullName != "System.Object")
                     return;
@@ -391,8 +449,8 @@ namespace Netjs
 
                 if (memberReferenceExpression.MemberName == "HasValue")
                 {
-                    var t = GetTypeRef(memberReferenceExpression.Target);
-                    if (t != null && t.FullName.StartsWith("System.Nullable`1", StringComparison.Ordinal))
+                    var t = resolve(memberReferenceExpression.Target) as TypeResolveResult;
+                    if (t != null && t.Type.FullName.StartsWith("System.Nullable`1", StringComparison.Ordinal))
                     {
                         var ta = memberReferenceExpression.Target;
                         ta.Remove();
@@ -1551,38 +1609,20 @@ namespace Netjs
             {
                 base.VisitInvocationExpression(invocationExpression);
 
-                var md = GetMethodDef(invocationExpression);
-                if (md == null)
+                var method = resolveMethod(invocationExpression);
+                if (method == null) return;
+                foreach (var parameter in invocationExpression.Arguments.Zip(method.Parameters, (a, b) => new { expression = a, expected = b }))
                 {
-                    return;
-                }
+                    var tra = resolveType(parameter.expression);
+                    if (tra == null || tra.Kind != TypeKind.Array) continue;
 
-                var i = 0;
-                foreach (var a in invocationExpression.Arguments)
-                {
-
-                    var p = md.Parameters[i];
-                    i++;
-
-                    var tra = GetTypeRef(a);
-                    if (tra == null || !tra.IsArray)
-                    {
-                        continue;
-                    }
-
-                    var trp = p.ParameterType;
-
-                    if (!trp.Name.StartsWith("IEnumerable", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
+                    if (!parameter.expected.Type.Name.StartsWith("IEnumerable", StringComparison.Ordinal)) continue;
 
                     var wrap = new InvocationExpression(
                         new MemberReferenceExpression(new TypeReferenceExpression(new SimpleType("NArray")), "ToEnumerable"),
-                        a.Clone());
+                        parameter.expression.Clone());
 
-                    a.ReplaceWith(wrap);
-
+                    parameter.expression.ReplaceWith(wrap);
                 }
 
             }
@@ -1591,8 +1631,8 @@ namespace Netjs
             {
                 base.VisitVariableInitializer(variableInitializer);
 
-                var tra = GetTypeRef(variableInitializer.Initializer);
-                if (tra == null || !tra.IsArray)
+                var tra = resolveType(variableInitializer.Initializer);
+                if (tra == null || tra.Kind != TypeKind.Array)
                     return;
 
                 var f = variableInitializer.Parent as VariableDeclarationStatement;
@@ -1627,8 +1667,8 @@ namespace Netjs
                     return;
 
                 var target = mr.Target;
-                var td = GetTypeDef(target);
-                if (td == null || !td.IsEnum)
+                var td = resolveType(target);
+                if (td == null || td.Kind != TypeKind.Enum)
                     return;
 
                 if (mr.MemberName == "GetHashCode")
@@ -1679,7 +1719,7 @@ namespace Netjs
             if (pt != null && pt.KnownTypeCode == KnownTypeCode.String)
                 return true;
 
-            var tr = GetTypeRef(type);
+            var tr = resolveType(type);
             return (tr != null && tr.FullName == "System.String");
         }
 
@@ -1743,12 +1783,10 @@ namespace Netjs
             {
                 base.VisitIndexerExpression(indexerExpression);
 
-                var t = GetTypeRef(indexerExpression.Target);
-
+                var t = resolveType(indexerExpression.Target);
+                Console.WriteLine("type " + t + " " + indexerExpression.Target);
                 if (t != null && t.FullName == "System.String")
                 {
-
-
                     var targ = indexerExpression.Target;
                     targ.Remove();
                     var index = indexerExpression.Arguments.FirstOrNullObject();
@@ -1814,8 +1852,8 @@ namespace Netjs
 
                 var q = from mr in methodDeclaration.Body.Descendants.OfType<MemberReferenceExpression>()
                         where mr.MemberName == "Equals" || mr.MemberName == "ToString" || mr.MemberName == "GetHashCode"
-                        let tr = GetTypeRef(mr.Target)
-                        where tr != null && tr.IsGenericParameter
+                        let tr = resolveType(mr.Target)
+                        where tr != null && tr.Kind == TypeKind.TypeParameter
                         select tr;
 
                 var ms = q.ToList();
@@ -1857,7 +1895,7 @@ namespace Netjs
 
                 foreach (var n in typeDeclaration.Members.OfType<MethodDeclaration>().Where(x => IsType(x.PrivateImplementationType, "IEnumerable") || IsType(x.PrivateImplementationType, "IEnumerator")))
                 {
-                   if(!IsType(n.PrivateImplementationType, "IEnumerator"))
+                    if (!IsType(n.PrivateImplementationType, "IEnumerator"))
                         n.Remove();
                 }
 
@@ -1957,8 +1995,8 @@ namespace Netjs
             {
                 base.VisitObjectCreateExpression(objectCreateExpression);
 
-                var td = GetTypeDef(objectCreateExpression.Type);
-                if (td == null || !IsDelegate(td) || objectCreateExpression.Arguments.Count != 1)
+                var td = resolveType(objectCreateExpression.Type);
+                if (td == null || td.Kind != TypeKind.Delegate || objectCreateExpression.Arguments.Count != 1)
                     return;
 
                 var a = objectCreateExpression.Arguments.First();
@@ -1973,10 +2011,10 @@ namespace Netjs
 
                 if (assignmentExpression.Operator != AssignmentOperatorType.Add && assignmentExpression.Operator != AssignmentOperatorType.Subtract)
                     return;
-
-                var t = assignmentExpression.Left.Annotation<EventDefinition>();
-                if (t == null)
-                    return;
+                // TODO, check if is event
+                //var t = assignmentExpression.Left.Annotation<EventDefinition>();
+                //if (t == null)
+                return;
 
                 var left = assignmentExpression.Left;
                 var right = assignmentExpression.Right;
@@ -2007,12 +2045,8 @@ namespace Netjs
                 if (binaryOperatorExpression.Operator != BinaryOperatorType.BitwiseOr)
                     return;
 
-                var leftT = GetTypeRef(binaryOperatorExpression.Left);
-
-                if (leftT != null && leftT.FullName == "System.Boolean")
-                {
+                if (resolveType(binaryOperatorExpression.Left)?.FullName == "System.Boolean")
                     binaryOperatorExpression.Operator = BinaryOperatorType.ConditionalOr;
-                }
             }
         }
 
@@ -2028,10 +2062,8 @@ namespace Netjs
                 base.VisitMemberReferenceExpression(memberReferenceExpression);
 
                 var tre = memberReferenceExpression.Target as TypeReferenceExpression;
-
                 if (tre != null)
                 {
-
                     var p = tre.Type as PrimitiveType;
 
                     if (p != null)
@@ -2057,83 +2089,44 @@ namespace Netjs
                             memberReferenceExpression.Target = new TypeReferenceExpression(new SimpleType("NNumber"));
                         }
                     }
-                    else
-                    {
-
-                        var tr = tre != null ? GetTypeRef(tre.Type) : null;
-
-                        var name = tr != null ? tr.FullName : "";
-                        if (name == "System.Math")
-                        {
-
-                            switch (memberReferenceExpression.MemberName)
-                            {
-                                case "Abs":
-                                    memberReferenceExpression.MemberName = "abs";
-                                    break;
-                                case "Sqrt":
-                                    memberReferenceExpression.MemberName = "sqrt";
-                                    break;
-                                case "Exp":
-                                    memberReferenceExpression.MemberName = "exp";
-                                    break;
-                                case "Pow":
-                                    memberReferenceExpression.MemberName = "pow";
-                                    break;
-                                case "Floor":
-                                    memberReferenceExpression.MemberName = "floor";
-                                    break;
-                                case "Ceiling":
-                                    memberReferenceExpression.MemberName = "ceil";
-                                    break;
-                                case "Cos":
-                                    memberReferenceExpression.MemberName = "cos";
-                                    break;
-                                case "Acos":
-                                    memberReferenceExpression.MemberName = "acos";
-                                    break;
-                                case "Sin":
-                                    memberReferenceExpression.MemberName = "sin";
-                                    break;
-                                case "Asin":
-                                    memberReferenceExpression.MemberName = "asin";
-                                    break;
-                                case "Atan":
-                                    memberReferenceExpression.MemberName = "atan";
-                                    break;
-                                case "Atan2":
-                                    memberReferenceExpression.MemberName = "atan2";
-                                    break;
-                                case "Tan":
-                                    memberReferenceExpression.MemberName = "tan";
-                                    break;
-                                case "Min":
-                                    memberReferenceExpression.MemberName = "min";
-                                    break;
-                                case "Max":
-                                    memberReferenceExpression.MemberName = "max";
-                                    break;
-                                default:
-                                    memberReferenceExpression.Target = new TypeReferenceExpression(new SimpleType("NMath"));
-                                    break;
-                            }
-                        }
-                        else if (name == "System.Array")
-                        {
-                            memberReferenceExpression.Target = new TypeReferenceExpression(new SimpleType("NArray"));
-                        }
-                        else if (name == "System.Console")
-                        {
-                            memberReferenceExpression.Target = new TypeReferenceExpression(new SimpleType("NConsole"));
-                        }
-                    }
-
+                    return;
                 }
-                else
+
+                var name = resolveType(memberReferenceExpression.Target)?.FullName;
+
+                if (name == "System.Math")
                 {
-
+                    var method = memberReferenceExpression.MemberName.ToLower();
+                    if (method == "ceiling") method = "ceil";
+                    memberReferenceExpression.MemberName = method;
+                    switch (method)
+                    {
+                        case "Abs":
+                        case "Sqrt":
+                        case "Exp":
+                        case "Pow":
+                        case "Floor":
+                        case "Ceil":
+                        case "Cos":
+                        case "Acos":
+                        case "Sin":
+                        case "Asin":
+                        case "Atan":
+                        case "Atan2":
+                        case "Tan":
+                        case "Min":
+                        case "Max":
+                        default:
+                            memberReferenceExpression.Target = new TypeReferenceExpression(new SimpleType("NMath"));
+                            break;
+                    }
                 }
+                else if (name == "System.Array")
+                    memberReferenceExpression.Target = new TypeReferenceExpression(new SimpleType("NArray"));
+                else if (name == "System.Console")
+                    memberReferenceExpression.Target = new TypeReferenceExpression(new SimpleType("NConsole"));
             }
+
 
             public override void VisitInvocationExpression(InvocationExpression invocationExpression)
             {
@@ -2144,18 +2137,8 @@ namespace Netjs
                 if (memberReferenceExpression == null)
                     return;
 
-                var t = GetTypeRef(memberReferenceExpression.Target);
-                if (t == null)
-                {
-                    // MinimalCorlib.Instance.CreateCompilation();
-                    var targ = memberReferenceExpression.Target;
-                    
-                    Console.WriteLine("Could not resolve " + targ);
-                    var result = resolver.Resolve(targ);
-                    if (result is ErrorResolveResult) Console.WriteLine("Err: " + result + ": " + (result as ErrorResolveResult).Message+ ": "+ resolver.GetExpectedType(targ));
-                    else Console.WriteLine("Is: " + result+": "+ resolver.GetExpectedType(targ));
-                    return;
-                }
+                var t = resolveType(memberReferenceExpression.Target);
+                if (t == null) return;
 
                 HashSet<string> repls = null;
                 string newTypeName = null;
@@ -2174,8 +2157,9 @@ namespace Netjs
                     repls = boolRepls;
                     newTypeName = "NBoolean";
                 }
-                else if (t != null && t.IsPrimitive)
+                else if (t != null && (!t.IsReferenceType ?? true))
                 {
+                    Console.WriteLine("warn: is " + t + " primitive (" + t.Kind + ")?");
                     repls = numberRepls;
                     newTypeName = "NNumber";
                 }
@@ -2202,10 +2186,8 @@ namespace Netjs
                                         newName),
                             new Expression[] { memberReferenceExpression.Target.Clone() }
                                 .Concat(invocationExpression.Arguments.Select(x => x.Clone())));
-
-                        var td = t.Resolve();
-                        var meth = td.Methods.First(x => x.Name == memberReferenceExpression.MemberName);
-                        n.AddAnnotation(meth.ReturnType);
+                        var meth = FindMethod(t, memberReferenceExpression.MemberName);
+                        typeCache.Add(n, new TypeResolveResult(meth.ReturnType));
                         invocationExpression.ReplaceWith(n);
                     }
                 }
@@ -2222,19 +2204,9 @@ namespace Netjs
             public override void VisitMemberReferenceExpression(MemberReferenceExpression memberReferenceExpression)
             {
                 base.VisitMemberReferenceExpression(memberReferenceExpression);
-
-                var s = memberReferenceExpression.Target as BaseReferenceExpression;
-                if (s != null)
-                {
-
-                    if (memberReferenceExpression.Annotation<PropertyDefinition>() != null ||
-                        memberReferenceExpression.Annotation<PropertyReference>() != null)
-                    {
-
-                        memberReferenceExpression.Target = new ThisReferenceExpression();
-                    }
-
-                }
+                if (memberReferenceExpression.Target is BaseReferenceExpression
+                    && ((resolve(memberReferenceExpression) as MemberResolveResult)?.Member is IProperty))
+                    memberReferenceExpression.Target = new ThisReferenceExpression();
             }
         }
 
@@ -2287,9 +2259,8 @@ namespace Netjs
                 {
                     base.VisitIndexerExpression(indexerExpression);
 
-                    var tr = GetTypeRef(indexerExpression.Target);
-
-                    if (tr != null && (tr.IsArray || tr.FullName == "System.String"))
+                    var tr = resolveType(indexerExpression.Target);
+                    if (tr != null && (tr.Kind == TypeKind.Array || tr.FullName == "System.String"))
                         return;
                     var t = indexerExpression.Target;
 
@@ -2303,13 +2274,9 @@ namespace Netjs
                             indexerExpression.Arguments.Concat(new[] { pa.Right.Clone() }).Select(x => x.Clone()));
 
                         pa.ReplaceWith(s);
-
-
-
                     }
                     else
                     {
-
                         var s = new InvocationExpression(
                             new MemberReferenceExpression(t.Clone(), "get_Item"),
                             indexerExpression.Arguments.Select(x => x.Clone()));
@@ -2332,9 +2299,9 @@ namespace Netjs
             {
                 base.VisitBinaryOperatorExpression(binaryOperatorExpression);
 
-                var leftT = GetTypeDef(binaryOperatorExpression.Left);
+                var leftT = resolveType(binaryOperatorExpression.Left);
 
-                if (leftT != null && !(leftT.IsPrimitive || leftT.FullName == "System.String"))
+                if (leftT != null && !(IsPrimitive(leftT) || leftT.FullName == "System.String"))
                 {
 
                     var name = "";
@@ -2385,7 +2352,7 @@ namespace Netjs
                         new MemberReferenceExpression(new IdentifierExpression(leftT.Name), name),
                             left, right);
 
-                        n.AddAnnotation(m.ReturnType);
+                        typeCache.Add(n, new TypeResolveResult(m.ReturnType));
 
                         binaryOperatorExpression.ReplaceWith(n);
                     }
@@ -2393,81 +2360,12 @@ namespace Netjs
             }
         }
 
-        static MethodDefinition FindMethod(TypeDefinition type, string name)
+        static IMethod FindMethod(IType type, string name)
         {
             if (string.IsNullOrEmpty(name))
                 return null;
-            var t = type;
-            var m = t.Methods.FirstOrDefault(x => x.Name == name);
-            while (m == null && t != null)
-            {
-                t = t.BaseType as TypeDefinition;
-                if (t != null)
-                {
-                    m = t.Methods.FirstOrDefault(x => x.Name == name);
-                }
-            }
-            return m;
-        }
-
-        static TypeDefinition GetTypeDef(AstNode expr)
-        {
-            var tr = GetTypeRef(expr);
-            var td = tr as TypeDefinition;
-            if (td == null && tr != null)
-                td = tr.Resolve();
-            return td;
-        }
-
-        static TypeReference GetTypeRef(AstNode expr)
-        {
-            var td = expr.Annotation<TypeDefinition>();
-            if (td != null)
-            {
-                return td;
-            }
-
-            var tr = expr.Annotation<TypeReference>();
-            if (tr != null)
-            {
-                return tr;
-            }
-
-            var ti = expr.Annotation<ICSharpCode.Decompiler.Ast.TypeInformation>();
-            if (ti != null)
-            {
-                return ti.InferredType;
-            }
-
-            var ilv = expr.Annotation<ICSharpCode.Decompiler.ILAst.ILVariable>();
-            if (ilv != null)
-            {
-                return ilv.Type;
-            }
-
-            var fr = expr.Annotation<FieldDefinition>();
-            if (fr != null)
-            {
-                return fr.FieldType;
-            }
-
-            var pr = expr.Annotation<PropertyDefinition>();
-            if (pr != null)
-            {
-                return pr.PropertyType;
-            }
-
-            var ie = expr as IndexerExpression;
-            if (ie != null)
-            {
-                var it = GetTypeRef(ie.Target);
-                if (it != null && it.IsArray)
-                {
-                    return it.GetElementType();
-                }
-            }
-
-            return null;
+            return type.GetMethods().FirstOrDefault(x => x.Name == name);
+            // todo? search base types
         }
 
         class Renames : DepthFirstAstVisitor, IAstTransform
@@ -2483,40 +2381,13 @@ namespace Netjs
 
                 if (memberReferenceExpression.MemberName == "Length")
                 {
-
-                    var tt = GetTargetTypeRef(memberReferenceExpression);
-
-                    if (tt != null)
-                    {
-                        if (tt.IsArray || tt.FullName == "System.String")
-                        {
-
-                            memberReferenceExpression.MemberName = "length";
-                        }
-                    }
+                    IType tt = resolveType(memberReferenceExpression.Target);
+                   // App.Info("type" + resolve(memberReferenceExpression.Target));
+                    if (tt?.Kind == TypeKind.Array || tt?.FullName == "System.String")
+                        memberReferenceExpression.MemberName = "length";
                 }
-            }
-
-            TypeReference GetTargetTypeRef(MemberReferenceExpression memberReferenceExpression)
-            {
-                var pd = memberReferenceExpression.Annotation<PropertyDefinition>();
-                if (pd != null)
-                {
-                    return pd.DeclaringType;
-                }
-
-                var fd = memberReferenceExpression.Annotation<FieldDefinition>();
-                if (fd == null)
-                    fd = memberReferenceExpression.Annotation<FieldReference>() as FieldDefinition;
-                if (fd != null)
-                {
-                    return fd.DeclaringType;
-                }
-
-                return GetTypeRef(memberReferenceExpression.Target);
             }
         }
-
         class RemoveEnumBaseType : DepthFirstAstVisitor, IAstTransform
         {
             public void Run(AstNode compilationUnit)
@@ -2994,21 +2865,19 @@ namespace Netjs
             {
                 base.VisitSimpleType(simpleType);
 
-                var td = GetTypeDef(simpleType);
-
-                if (td == null || !IsDelegate(td))
+                var td = resolveType(simpleType);
+                if(simpleType.ToString().StartsWith("Func"))Console.WriteLine(simpleType + "=" + td);
+                if (td == null || td.Kind != TypeKind.Delegate)
                 {
                     return;
                 }
-
+                Console.WriteLine("Converting " + simpleType);
                 var subs = new Dictionary<string, AstType>();
-
-                var invoke = td.Methods.First(x => x.Name == "Invoke");
+                var invoke = FindMethod(td, "Invoke");
 
                 if (simpleType.TypeArguments.Count > 0)
                 {
-
-                    var ps = td.GenericParameters;
+                    var ps = td.TypeArguments;
                     var i = 0;
                     foreach (var a in simpleType.TypeArguments)
                     {
@@ -3023,13 +2892,13 @@ namespace Netjs
 
                 foreach (var p in invoke.Parameters)
                 {
-
-                    var pt = p.ParameterType.IsGenericParameter ? subs[p.ParameterType.Name] : GetTsType(p.ParameterType);
+                    // TODO this kind working?
+                    var pt = p.Type.Kind == TypeKind.TypeParameter ? subs[p.Type.Name] : GetTsType(p.Type);
 
                     nt.Parameters.Add(new ParameterDeclaration(pt.Clone(), p.Name));
                 }
 
-                nt.ReturnType = invoke.ReturnType.IsGenericParameter ? subs[invoke.ReturnType.Name] : GetTsType(invoke.ReturnType);
+                nt.ReturnType = invoke.ReturnType.Kind == TypeKind.TypeParameter ? subs[invoke.ReturnType.Name] : GetTsType(invoke.ReturnType);
 
                 if (nt.ReturnType is PrimitiveType)
                 {
@@ -3043,13 +2912,12 @@ namespace Netjs
                     }
                 }
 
-                nt.AddAnnotation(td);
-
+                typeCache.Add(nt, resolve(simpleType));
                 simpleType.ReplaceWith(nt);
             }
         }
 
-        static AstType GetTsType(TypeReference tr)
+        static AstType GetTsType(IType tr)
         {
             AstType r;
             switch (tr.FullName)
@@ -3081,11 +2949,11 @@ namespace Netjs
                     r = new PrimitiveType("number");
                     break;
                 default:
-                    if (tr.IsGenericInstance)
+                    if (tr.IsParameterized) // TODO?: IsGenericInstance
                     {
-                        var git = (GenericInstanceType)tr;
-                        var st = new SimpleType(git.Name.Substring(0, git.Name.IndexOf('`')));
-                        st.TypeArguments.AddRange(git.GenericArguments.Select(x => GetTsType(x)));
+                        Console.Write(tr + " is generic. can has `?");
+                        var st = new SimpleType(tr.Name.Substring(0, tr.Name.IndexOf('`')));
+                        st.TypeArguments.AddRange(tr.TypeArguments.Select(GetTsType));
                         r = st;
                     }
                     else
@@ -3095,38 +2963,8 @@ namespace Netjs
 
                     break;
             }
-            r.AddAnnotation(tr);
+            typeCache.Add(r, new TypeResolveResult(tr));
             return r;
-        }
-
-        static TypeDefinition GetTypeDef(AstType type)
-        {
-            var td = type.Annotation<TypeDefinition>();
-
-            if (td == null)
-            {
-                var tr = type.Annotation<TypeReference>();
-                if (tr != null)
-                {
-                    td = tr.Resolve();
-                }
-            }
-
-            return td;
-        }
-
-        static TypeReference GetTypeRef(AstType type)
-        {
-            return type.Annotation<TypeDefinition>() as TypeReference ?? type.Annotation<TypeReference>();
-        }
-
-        public static bool IsDelegate(TypeDefinition typeDefinition)
-        {
-            if (typeDefinition == null || typeDefinition.BaseType == null)
-            {
-                return false;
-            }
-            return typeDefinition.BaseType.FullName == "System.MulticastDelegate";
         }
 
         class FixEvents : IAstTransform
@@ -3200,16 +3038,14 @@ namespace Netjs
 
             static bool IsEventRef(Expression expr)
             {
-
-                var fd = expr.Annotation<FieldDefinition>();
-                if (fd == null)
-                    return false;
+                var field = (resolveMember(expr) as IField);
+                if (field == null) return false;
 
                 var t = expr.GetParent<TypeDeclaration>();
                 if (t == null)
                     return false;
 
-                var f = t.Members.FirstOrDefault(x => x.Name == fd.Name);
+                var f = t.Members.FirstOrDefault(x => x.Name == field.Name);
                 if (f == null)
                     return false;
 
@@ -3334,11 +3170,7 @@ namespace Netjs
                 }
 
                 var newType = new SimpleType(newName, args.Select(x => x.Clone()));
-                var td = memberType.Annotation<TypeDefinition>();
-                if (td != null)
-                {
-                    newType.AddAnnotation(td);
-                }
+                typeCache.Add(newType, resolve(memberType));
                 memberType.ReplaceWith(newType);
 
             }
@@ -3378,9 +3210,9 @@ namespace Netjs
                     var pty = pcompty.BaseType;
 
                     var access = new MemberReferenceExpression(new IdentifierExpression(p.Name), "val");
-                    var ptd = GetTypeDef(pty);
+                    var ptd = resolveType(pty);
                     if (ptd != null)
-                        access.AddAnnotation(ptd);
+                        typeCache.Add(access, resolve(pty));
                     sub.Subs[p.Name] = access;
                     p.ParameterModifier = ParameterModifier.None;
                     var c = new SimpleType("NReference", p.Type.Clone());
@@ -3652,8 +3484,8 @@ namespace Netjs
                     {
 
                         var thisInit = c.Initializer;
-                        var md = GetMethodDef(thisInit);
-                        var thisCtor = ctors.FirstOrDefault(x => GetMethodDef(x) == (md));
+                        var md = resolveMethod(thisInit);
+                        var thisCtor = ctors.FirstOrDefault(x => resolveMethod(x) == (md));
 
                         //
                         // Inline this
@@ -3817,32 +3649,6 @@ namespace Netjs
 
         }
 
-        static MethodDefinition GetMethodDef(AstNode node)
-        {
-            var mr = GetMethodRef(node);
-
-            var md = mr as MethodDefinition;
-            if (md != null)
-                return md;
-
-            if (mr != null)
-                return mr.Resolve();
-
-            return null;
-        }
-
-        static MethodReference GetMethodRef(AstNode node)
-        {
-            var mr = node.Annotation<MethodReference>();
-            if (mr != null)
-                return mr;
-
-            mr = node.Annotation<MethodDefinition>();
-            if (mr != null)
-                return mr;
-
-            return null;
-        }
 
         class Substitute : DepthFirstAstVisitor
         {
@@ -3895,7 +3701,7 @@ namespace Netjs
                             Name = (getter ? "get " : "set ") + p.Name,
                             Modifiers = p.Modifiers,
                         };
-                        fun.AddAnnotation(a);
+                        typeCache.Add(fun, resolve(a));
 
                         if (getter)
                         {
@@ -4000,28 +3806,20 @@ namespace Netjs
             }
         }
 
-        public static bool IsDelegate(AstNode type)
+        public static bool IsDelegate(AstType type)
         {
-            return IsDelegate(GetTypeDef(type));
+            return resolveType(type)?.Kind == TypeKind.Delegate;
         }
 
         public static bool IsInterface(AstType type)
         {
-            return IsInterface(GetTypeDef(type));
+            return resolveType(type)?.Kind == TypeKind.Interface;
         }
 
         public static bool IsInterface(TypeDeclaration type)
         {
             return type.ClassType == ClassType.Interface;
         }
-
-        public static bool IsInterface(TypeDefinition td)
-        {
-            if (td == null)
-                return false;
-            return td.IsInterface;
-        }
-
         class Diff
         {
             public ParameterDeclaration[] Item1;
@@ -4140,7 +3938,6 @@ namespace Netjs
             for (int i = 0; i < ps.Count; i++)
             {
                 var p = ps[i];
-
                 if (IsInterface(p.Type))
                     continue; // Now way to check interfaces?
                 if (IsDelegate(p.Type))
@@ -4161,17 +3958,10 @@ namespace Netjs
 
         static AstType GetJsConstructorType(AstType type)
         {
-            var tr = GetTypeDef(type);
-            if (tr != null && tr.IsEnum)
-            {
+            if (resolveType(type)?.Kind == TypeKind.Enum)
                 return new PrimitiveType("Number");
-            }
-
-            var ct = type as ComposedType;
-            if (ct != null)
-            {
+            if (type is ComposedType)
                 return new SimpleType("Array");
-            }
 
             var st = type as SimpleType;
             if (st != null)
@@ -4222,32 +4012,20 @@ namespace Netjs
 
             var mt = type as MemberType;
             if (mt != null)
-            {
                 return new SimpleType(mt.MemberName);
-            }
 
             throw new NotSupportedException("Unknown JS constructor");
         }
 
         static string GetJsConstructor(AstType type)
         {
-            var tr = GetTypeDef(type);
-            if (tr != null && tr.IsEnum)
-            {
+            if (resolveType(type)?.Kind == TypeKind.Enum)
                 return "Number";
-            }
-
-            var ct = type as ComposedType;
-            if (ct != null)
-            {
+            if (type is ComposedType)
                 return "Array";
-            }
-
             var st = type as SimpleType;
             if (st != null)
-            {
                 return st.Identifier;
-            }
 
             var pt = type as PrimitiveType;
             if (pt != null)
